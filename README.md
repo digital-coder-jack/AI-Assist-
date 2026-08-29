@@ -44,3 +44,19 @@ API keys, tokens, and the shared backend secret are environment-only. The shared
 ## Limitations
 
 Real Discord and AI provider calls require deployment credentials and were not executed in this sandbox. Provider defaults can be overridden because model availability changes over time. Context is process memory and is lost after a bot restart; production persistence can be introduced behind the existing request context without exposing provider credentials to Discord.
+
+## Forge Data Center 2
+
+Forge Data Center 2 is logically separate from any community/profile data and is dedicated to Forge Assist analytics. The Vercel API stores user summaries, question history, provider outcomes, language counts, and attachment metadata in the JSON object `FORGE_ASSIST_S3_DATA_KEY` inside an S3-compatible bucket. Actual attachment bytes are stored as separate objects under `forge-assist/attachments/`; the system never relies on temporary Discord URLs as permanent references and never stores binary files inside the JSON record.
+
+The Wispbyte bot sends telemetry and attachment metadata asynchronously after processing a question. Data Center 2 outages therefore do not block or crash Discord replies. Attachment ingestion downloads the Discord file immediately and refuses files above `FORGE_ASSIST_MAX_ATTACHMENT_BYTES` rather than falsely claiming persistence.
+
+### Data Center 2 API
+
+The authenticated ingestion routes are `POST /api/assist/events` and `POST /api/assist/attachment`. Administrative reads are available through `GET /api/assist/admin?action=stats`, `user&userId=<id>`, `questions&page=1&size=10`, and `attachments`. Administrative API reads require both the shared `x-forge-assist-secret` and `x-forge-assist-admin-key` headers.
+
+### Telegram administration
+
+`POST /api/telegram/webhook` is a Vercel-compatible Telegram webhook handler. It uses the existing-bot strategy when an existing bot is present; this repository had no existing Telegram bot, so the handler is a dedicated Forge Assist administration interface. Only IDs listed in `TELEGRAM_ADMIN_IDS` are authorized. Unauthorized Telegram users receive no data. Supported commands are `/assist`, `/assist_user <Discord User ID>`, `/assist_questions [search]`, `/assist_search <text>`, and `/assist_attachments`. Question results are capped to a short page to avoid oversized Telegram messages; attachment commands provide stored references rather than automatically sending potentially large files. Configure the Telegram webhook externally to point to the deployed `/api/telegram/webhook` URL.
+
+Telegram availability does not affect the Discord bot. Telegram and API errors are logged without tokens or private payloads and receive a safe temporary-error response where appropriate.
