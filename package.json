@@ -1,0 +1,16 @@
+{
+  "name": "forge-assist",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Forge Assist Discord bot and Vercel AI backend",
+  "main": "src/bot/index.js",
+  "scripts": {
+    "start": "node src/bot/index.js",
+    "test": "node --test",
+    "vercel-build": "echo Forge Assist backend ready"
+  },
+  "engines": { "node": ">=18" },
+  "dependencies": {
+    "discord.js": "^14.16.3"
+  }
+}
