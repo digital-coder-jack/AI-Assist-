@@ -1,62 +1,50 @@
 # Forge Assist
 
-Forge Assist is a separate Discord AI assistant designed for natural conversations. The Discord Gateway process runs on Wispbyte, while a stateless HTTP backend runs on Vercel and owns provider credentials. Existing bots and unrelated repository features are not present in this initial repository and are left untouched.
+Forge Assist is a separate Discord AI assistant. The Discord Gateway and message handling run on Wispbyte, while the stateless AI/API backend runs on Vercel. Forge Data Center 2 is a private Telegram destination owned by the operator; it receives archive messages through a Telegram bot.
 
 ## Architecture
 
 ```text
 Discord member
     -> Wispbyte: src/bot/index.js
-    -> HTTPS POST /api/chat
-    -> Vercel: api/chat.js
-    -> Provider Manager: src/backend/providers.js
-       -> Claude, Kimi, or Groq in configured priority order
-    -> response to Wispbyte
+    -> Vercel: POST /api/chat
+    -> Claude / Kimi / Groq with failover
     -> Discord reply
+
+Wispbyte archive event
+    -> Vercel: POST /api/assist/events
+    -> Telegram Bot API
+    -> private FORGE_DATA_CENTER_2_CHAT_ID destination
 ```
 
-The bot answers only when directly mentioned, when a message replies to the bot, or when its channel ID is listed in `FORGE_ASSIST_CHANNEL_IDS`. It does not read every server message by default. Context is isolated by guild/channel/member and capped by `FORGE_ASSIST_CONTEXT_LIMIT`; it is intentionally in-memory on the Wispbyte process, so a restart clears it. The backend accepts context in each request, leaving room for a persistent database adapter later without changing provider code.
-
-Responses preserve the prompt's language through the provider system instruction, including Hindi, English, and Hinglish. Responses longer than Discord's 2,000-character limit are split at sensible newline or word boundaries. Provider calls are sequential and fail over from `AI_PROVIDER_ORDER`; a timeout, rate limit, invalid key, network error, unavailable service, or malformed response is logged without secrets and does not terminate the bot.
+The bot responds only to direct mentions, replies to the bot, or configured AI channels. Conversation context is isolated by guild, channel, and member and capped by `FORGE_ASSIST_CONTEXT_LIMIT`. Responses preserve Hindi, English, and Hinglish naturally. Provider failures are isolated and use the existing Claude/Kimi/Groq fallback sequence.
 
 ## Deployment
 
-### Vercel backend
+### Vercel
 
-Deploy the repository as a Vercel project using the repository root. The exact serverless entry points are `api/health.js` and `api/chat.js`; no Discord Gateway or long-running process is required on Vercel. Set the backend variables from `.env.example`: `CLAUDE_API_KEY`, `KIMI_API_KEY`, `GROQ_API_KEY`, `FORGE_ASSIST_API_SECRET`, and any provider/model or timeout overrides. At least one provider key is required. Test the deployment with `GET https://<deployment-domain>/api/health`, which returns `{ "status": "ok", "service": "forge-assist-backend" }`.
+Deploy the repository root as a Vercel project. Serverless entry points are `api/health.js`, `api/chat.js`, and `api/assist/events.js`. Vercel does not host the Discord Gateway or any permanent process. Configure the AI variables, `FORGE_ASSIST_API_SECRET`, `TELEGRAM_BOT_TOKEN`, and `FORGE_DATA_CENTER_2_CHAT_ID`.
 
-### Wispbyte Discord bot
+### Wispbyte
 
-Run `npm install` once and start with `npm start` (or `node src/bot/index.js`). Set `DISCORD_TOKEN`, `FORGE_ASSIST_BACKEND_URL` to the Vercel deployment origin, and the same `FORGE_ASSIST_API_SECRET` used by Vercel. `FORGE_ASSIST_REQUEST_TIMEOUT_MS`, `FORGE_ASSIST_CONTEXT_LIMIT`, and `FORGE_ASSIST_CHANNEL_IDS` are optional. Enable Discord's Message Content Intent for the bot application. The Wispbyte process makes HTTPS requests only; it never receives provider API keys.
+Run `npm install` and start with `npm start`. Configure `DISCORD_TOKEN`, `FORGE_ASSIST_BACKEND_URL`, `FORGE_ASSIST_API_SECRET`, `TELEGRAM_BOT_TOKEN`, and `FORGE_DATA_CENTER_2_CHAT_ID`. The Telegram variables are used only to determine whether archiving is enabled; the bot sends archive data through the Vercel backend, which owns the Telegram API call. Enable Discord Message Content Intent.
 
-### API contract
+## Data Center 2 archive
 
-`POST /api/chat` requires the `x-forge-assist-secret` header when `FORGE_ASSIST_API_SECRET` is configured. Its JSON body is `{ "message": "...", "context": [{"role":"user|assistant","content":"..."}] }`. A successful response is `{ "response": "...", "provider": "claude|kimi|groq" }`. Temporary provider failure returns HTTP 503 with a friendly error message. `GET /api/health` is intentionally unauthenticated and exposes no secrets.
+Each processed question is sent to the private Telegram destination with the username, Discord user ID, guild ID, question, timestamp, language, provider, event ID, and attachment names. A compact statistics message accompanies each archive event with query totals tracked by the running Wispbyte process, provider outcomes, language counts, active conversations, and context count. Complete AI responses are not archived.
 
-## Internet search status
+Attachments are passed as their current Discord CDN URLs to Telegram's `sendDocument` API. This supports practical images, videos, PDFs, documents, text files, spreadsheets, archives, and audio where Telegram accepts the file and size. If Telegram rejects an attachment, the system logs the failure without secrets and sends a metadata/reference notice to the private destination instead. Discord users still receive their answer regardless of Telegram availability.
 
-No search provider is implemented in Phase 1, and the assistant does not fabricate current-information results. The backend/provider boundary is isolated so a real search interface can be added later. Forge Tech Reporter integration is explicitly out of scope and has not been added.
+The archive event ID is derived from the Discord message ID and outcome, and an in-process set prevents duplicate submissions during the lifetime of the Wispbyte process. Telegram Bot API has no durable idempotency store in this implementation, so a process restart or an ambiguous network timeout can still require manual duplicate cleanup. No database, object-storage service, admin dashboard, Telegram admin allowlist, or `TELEGRAM_ADMIN_IDS` variable is used.
 
-## Security and scope
+## API contract
 
-API keys, tokens, and the shared backend secret are environment-only. The shared secret is sent in an HTTP header, never in a query parameter, and is never logged. The system prompt permits defensive security and educational content while redirecting harmful requests. The implementation does not modify or integrate Forge Guardian, Forge Tech Reporter, moderation, onboarding, or profile systems.
+`POST /api/chat` accepts `{ "message": "...", "context": [...] }` and returns `{ "response": "...", "provider": "..." }`. `POST /api/assist/events` accepts the archive event and its attachment URL metadata. Both routes use the `x-forge-assist-secret` header when `FORGE_ASSIST_API_SECRET` is configured. `GET /api/health` is public and returns a small status object without secrets.
 
-## Limitations
+## Environment variables
 
-Real Discord and AI provider calls require deployment credentials and were not executed in this sandbox. Provider defaults can be overridden because model availability changes over time. Context is process memory and is lost after a bot restart; production persistence can be introduced behind the existing request context without exposing provider credentials to Discord.
+Required or optional variables are documented in `.env.example`. Keep all values empty in that file and provide real values only in Vercel/Wispbyte environment configuration. The private Telegram chat or channel must be configured so the Telegram bot can post to it.
 
-## Forge Data Center 2
+## Scope and limitations
 
-Forge Data Center 2 is logically separate from any community/profile data and is dedicated to Forge Assist analytics. The Vercel API stores user summaries, question history, provider outcomes, language counts, and attachment metadata in the JSON object `FORGE_ASSIST_S3_DATA_KEY` inside an S3-compatible bucket. Actual attachment bytes are stored as separate objects under `forge-assist/attachments/`; the system never relies on temporary Discord URLs as permanent references and never stores binary files inside the JSON record.
-
-The Wispbyte bot sends telemetry and attachment metadata asynchronously after processing a question. Data Center 2 outages therefore do not block or crash Discord replies. Attachment ingestion downloads the Discord file immediately and refuses files above `FORGE_ASSIST_MAX_ATTACHMENT_BYTES` rather than falsely claiming persistence.
-
-### Data Center 2 API
-
-The authenticated ingestion routes are `POST /api/assist/events` and `POST /api/assist/attachment`. Administrative reads are available through `GET /api/assist/admin?action=stats`, `user&userId=<id>`, `questions&page=1&size=10`, and `attachments`. Administrative API reads require both the shared `x-forge-assist-secret` and `x-forge-assist-admin-key` headers.
-
-### Telegram administration
-
-`POST /api/telegram/webhook` is a Vercel-compatible Telegram webhook handler. It uses the existing-bot strategy when an existing bot is present; this repository had no existing Telegram bot, so the handler is a dedicated Forge Assist administration interface. Only IDs listed in `TELEGRAM_ADMIN_IDS` are authorized. Unauthorized Telegram users receive no data. Supported commands are `/assist`, `/assist_user <Discord User ID>`, `/assist_questions [search]`, `/assist_search <text>`, and `/assist_attachments`. Question results are capped to a short page to avoid oversized Telegram messages; attachment commands provide stored references rather than automatically sending potentially large files. Configure the Telegram webhook externally to point to the deployed `/api/telegram/webhook` URL.
-
-Telegram availability does not affect the Discord bot. Telegram and API errors are logged without tokens or private payloads and receive a safe temporary-error response where appropriate.
+Forge Tech Reporter, Forge Guardian, and unrelated existing features are not modified. Internet search is not implemented. Real Discord, Telegram, and AI-provider calls require deployment credentials and were not executed in this sandbox; unit tests and syntax checks are run locally.
