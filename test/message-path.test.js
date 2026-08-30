@@ -45,12 +45,12 @@ test('direct messages reach /api/chat and reply only in the same DM', async () =
   global.fetch = async (url, options) => { calls.push({ url, options }); return { ok: true, status: 200, json: async () => ({ response: 'AI response', provider: 'groq' }) }; };
   const message = makeMessage({ id: 'dm-1', guildId: null, channelId: 'dm-channel', content: 'help me privately' });
   const result = await bot.handleMessage(message, client(), { env: { FORGE_ASSIST_BACKEND_URL: 'https://example.vercel.app' }, logger: { log() {} } });
-  assert.equal(result.reason, 'direct_message');
+  assert.equal(result.reason, 'private_response');
   assert.equal(calls.length, 1);
   assert.equal(calls[0].url, 'https://example.vercel.app/api/chat');
   assert.equal(JSON.parse(calls[0].options.body).message, 'help me privately');
-  assert.deepEqual(message.replies, ['AI response']);
-  assert.deepEqual(message.sends, []);
+  assert.deepEqual(message.replies, []);
+  assert.deepEqual(message.sends, ['AI response']);
   global.fetch = originalFetch;
 });
 
@@ -73,7 +73,7 @@ test('messages outside configured channel are ignored while direct mentions rema
 test('bot messages are ignored and duplicate messages are not processed twice', async () => {
   bot._resetForTests();
   const botMessage = makeMessage({ author: { bot: true } });
-  assert.equal((await bot.handleMessage(botMessage, client(), { env: { FORGE_ASSIST_CHANNEL_IDS: 'forge-channel' }, logger: { log() {} } })).reason, 'not_targeted');
+  assert.equal((await bot.handleMessage(botMessage, client(), { env: { FORGE_ASSIST_CHANNEL_IDS: 'forge-channel' }, logger: { log() {} } })).reason, 'author_is_bot');
 
   const originalFetch = global.fetch;
   let calls = 0;
@@ -82,7 +82,7 @@ test('bot messages are ignored and duplicate messages are not processed twice', 
   const options = { env: { FORGE_ASSIST_BACKEND_URL: 'https://example.vercel.app' }, logger: { log() {} } };
   const first = await bot.handleMessage(dm, client(), options);
   const second = await bot.handleMessage(dm, client(), options);
-  assert.equal(first.reason, 'direct_message');
+  assert.equal(first.reason, 'private_response');
   assert.equal(second.reason, 'duplicate');
   assert.equal(calls, 1);
   global.fetch = originalFetch;
