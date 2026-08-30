@@ -7,9 +7,14 @@ Forge Assist is a separate Discord AI assistant. The Discord Gateway and message
 ```text
 Discord member
     -> Wispbyte: src/bot/index.js
+    -> private Discord DM
     -> Vercel: POST /api/chat
     -> Claude / Kimi / Groq with failover
-    -> Discord reply
+    -> private Discord DM reply
+
+Configured public-channel message
+    -> privacy redirect to DM
+    -> no public AI request or response
 
 Wispbyte archive event
     -> Vercel: POST /api/assist/events
@@ -17,7 +22,7 @@ Wispbyte archive event
     -> private FORGE_DATA_CENTER_2_CHAT_ID destination
 ```
 
-The bot responds only to direct mentions, replies to the bot, or configured AI channels. Conversation context is isolated by guild, channel, and member and capped by `FORGE_ASSIST_CONTEXT_LIMIT`. Responses preserve Hindi, English, and Hinglish naturally. Provider failures are isolated and use the existing Claude/Kimi/Groq fallback sequence.
+The bot processes messages in two private-safe cases: direct messages to Forge Assist, and direct mentions in a guild. A normal message in a channel listed in `FORGE_ASSIST_CHANNEL_IDS` receives only a short public instruction to continue by DM; its question is not sent to AI and no AI response is posted publicly. Messages outside configured channels are ignored unless they directly mention the bot. Bot-authored messages are ignored. DM conversation context is isolated strictly by Discord user ID and capped by `FORGE_ASSIST_CONTEXT_LIMIT`. Responses preserve Hindi, English, and Hinglish naturally. Provider failures are isolated and use the existing Claude/Kimi/Groq fallback sequence.
 
 ## Deployment
 
@@ -31,9 +36,9 @@ Run `npm install` and start with `npm start`. Configure `DISCORD_TOKEN`, `FORGE_
 
 ## Data Center 2 archive
 
-Each processed question is sent to the private Telegram destination with the username, Discord user ID, guild ID, question, timestamp, language, provider, event ID, and attachment names. A compact statistics message accompanies each archive event with query totals tracked by the running Wispbyte process, provider outcomes, language counts, active conversations, and context count. Complete AI responses are not archived.
+Each processed private question is sent to the private Telegram destination with the username, Discord user ID, guild ID when available, question, AI response, timestamp, language, provider, event ID, and attachment names. A compact statistics message accompanies each archive event with query totals tracked by the running Wispbyte process, provider outcomes, language counts, active conversations, and context count. Private questions and responses are never written to Wispbyte logs.
 
-Attachments are passed as their current Discord CDN URLs to Telegram's `sendDocument` API. This supports practical images, videos, PDFs, documents, text files, spreadsheets, archives, and audio where Telegram accepts the file and size. If Telegram rejects an attachment, the system logs the failure without secrets and sends a metadata/reference notice to the private destination instead. Discord users still receive their answer regardless of Telegram availability.
+Attachments sent in a private DM are associated with that Discord user and forwarded through the existing Telegram Data Center 2 archive path using Discord CDN URLs. This supports practical images, videos, PDFs, documents, text files, spreadsheets, archives, and audio where Telegram accepts the file and size. Attachment URLs are not printed in Wispbyte logs and are not exposed in Discord. If Telegram rejects an attachment, the system logs only a safe failure summary; the Discord user still receives the AI answer when the backend succeeds.
 
 The archive event ID is derived from the Discord message ID and outcome, and an in-process set prevents duplicate submissions during the lifetime of the Wispbyte process. Telegram Bot API has no durable idempotency store in this implementation, so a process restart or an ambiguous network timeout can still require manual duplicate cleanup. No database, object-storage service, admin dashboard, Telegram admin allowlist, or `TELEGRAM_ADMIN_IDS` variable is used.
 

@@ -12,6 +12,6 @@ test('Telegram archive chunks messages within Telegram limits', () => {
 });
 
 test('Telegram archive contains question and stable event metadata', () => {
-  const text = questionText({ username: 'jack', userId: '123', guildId: '456', question: 'How do I deploy?', language: 'English', provider: 'groq', timestamp: '2026-08-29T00:00:00Z', eventId: 'm1:success', attachments: [] });
-  assert.match(text, /jack/); assert.match(text, /How do I deploy/); assert.match(text, /m1:success/);
+  const text = questionText({ username: 'jack', userId: '123', guildId: '456', question: 'How do I deploy?', response: 'Use the deployment checklist.', language: 'English', provider: 'groq', timestamp: '2026-08-29T00:00:00Z', eventId: 'm1:success', attachments: [{ filename: 'guide.pdf' }] });
+  assert.match(text, /jack/); assert.match(text, /How do I deploy/); assert.match(text, /Use the deployment checklist/); assert.match(text, /guide.pdf/); assert.match(text, /m1:success/);
 });
