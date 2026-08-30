@@ -18,8 +18,16 @@ function readDiscordToken(env = process.env) {
   return cleanValue(env.DISCORD_TOKEN) || null;
 }
 
+function readConfiguredChannelIds(env = process.env) {
+  return cleanValue(env.FORGE_ASSIST_CHANNEL_IDS).split(',').map(value => cleanValue(value)).filter(Boolean);
+}
+
 function logTokenDiagnostic(token, logger = console) {
   logger.log(`[forge-assist] DISCORD_TOKEN configured: ${Boolean(token)} (length: ${token ? token.length : 0})`);
 }
 
-module.exports = { cleanValue, readDiscordToken, logTokenDiagnostic, dotenvLoaded };
+function logChannelDiagnostic(channelIds, logger = console) {
+  logger.log(`[forge-assist] FORGE_ASSIST_CHANNEL_IDS configured: ${channelIds.length > 0} (parsed: ${channelIds.length ? channelIds.join(',') : 'none'})`);
+}
+
+module.exports = { cleanValue, readDiscordToken, readConfiguredChannelIds, logTokenDiagnostic, logChannelDiagnostic, dotenvLoaded };
