@@ -23,17 +23,18 @@ function makeMessage(overrides = {}) {
 
 function client() { return { user: { id: 'bot-id' } }; }
 
-test('public configured-channel messages are redirected and never call the backend', async () => {
+test('public configured-channel messages reach the backend and reply publicly', async () => {
   bot._resetForTests();
   const originalFetch = global.fetch;
-  let calls = 0;
-  global.fetch = async () => { calls += 1; throw new Error('backend must not be called'); };
+  const calls = [];
+  global.fetch = async (url, options) => { calls.push({ url, options }); return { ok: true, status: 200, json: async () => ({ response: 'Public AI response', provider: 'groq' }) }; };
   const message = makeMessage();
   const logs = [];
-  const result = await bot.handleMessage(message, client(), { env: { FORGE_ASSIST_CHANNEL_IDS: 'forge-channel' }, logger: { log(value) { logs.push(value); } } });
-  assert.equal(result.reason, 'public_redirect');
-  assert.equal(calls, 0);
-  assert.deepEqual(message.replies, ['For privacy, please continue this conversation with Forge Assist in a direct message (DM).']);
+  const result = await bot.handleMessage(message, client(), { env: { FORGE_ASSIST_CHANNEL_IDS: 'forge-channel', FORGE_ASSIST_BACKEND_URL: 'https://example.vercel.app' }, logger: { log(value) { logs.push(value); } } });
+  assert.equal(result.reason, 'private_response');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, 'https://example.vercel.app/api/chat');
+  assert.deepEqual(message.replies, ['Public AI response']);
   assert.equal(logs.some(value => value.includes('help me')), false);
   global.fetch = originalFetch;
 });

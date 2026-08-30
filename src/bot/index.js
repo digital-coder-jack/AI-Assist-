@@ -59,8 +59,8 @@ function archiveEvent(message, prompt, success, provider, response = '', scope =
 function logGuildDiagnostics(client, logger = console, env = process.env) { const user = client.user; const guilds = [...client.guilds.cache.values()]; logger.log(`[forge-assist] logged in as ${user.tag}`); logger.log(`[forge-assist] bot user ID: ${user.id}`); if (env.DISCORD_APPLICATION_ID) logger.log(`[forge-assist] configured application ID matches logged-in bot: ${String(env.DISCORD_APPLICATION_ID).trim() === user.id}`); logger.log(`[forge-assist] guild count: ${guilds.length}`); if (!guilds.length) logger.log('[forge-assist] serving 0 guilds'); for (const guild of guilds) logger.log(`[forge-assist] guild: ${guild.name} (${guild.id})`); return guilds; }
 async function sendPrivateRedirect(message) { await message.reply('For privacy, please continue this conversation with Forge Assist in a direct message (DM).'); }
 async function openPrivateConversation(message, logger = console) { const dm = await message.author.send('Hey! I\'ve moved this conversation to DM so your AI chat stays private.'); const files = attachmentFiles(message); if (files.length) { try { await dm.channel.send({ files }); } catch (error) { logger.log(`[forge-assist] private attachment forwarding skipped: ${error.message}`); } } return dm.channel; }
-function scheduleDeletion(message, logger = console, setTimer = setTimeout) { if (deletionTimers.has(message.id)) return; deletionTimers.add(message.id); setTimer(async () => { try { await message.delete(); } catch (error) { if (error?.code !== 10008 && error?.code !== 10003) logger.log(`[forge-assist] public message deletion skipped: ${error.message}`); } finally { deletionTimers.delete(message.id); } }, DELETE_DELAY_MS); }
-async function sendResponse(channel, response) { let first = true; for (const part of splitMessage(response)) { if (first && typeof channel.send === 'function' && channel.lastReply) { await channel.send(part); } else await channel.send(part); first = false; } }
+function scheduleDeletion(message, logger = console, setTimer = setTimeout) { if (deletionTimers.has(message.id)) return; deletionTimers.add(message.id); logger.log('[forge-assist] mention message deletion scheduled'); setTimer(async () => { try { await message.delete(); logger.log('[forge-assist] mention message deleted'); } catch (error) { if (error?.code !== 10008 && error?.code !== 10003) logger.log('[forge-assist] could not delete mention message'); } finally { deletionTimers.delete(message.id); } }, DELETE_DELAY_MS); }
+async function sendResponse(channel, response, message, replyFirst = false) { let first = true; for (const part of splitMessage(response)) { if (first && replyFirst && typeof message?.reply === 'function') await message.reply(part); else await channel.send(part); first = false; } }
 
 async function processPrivateQuery(message, channel, prompt, { logger = console, env = process.env, scope = keyFor(message), schedulePublicDeletion = false } = {}) {
   const attachments = attachmentMetadata(message);
@@ -71,7 +71,7 @@ async function processPrivateQuery(message, channel, prompt, { logger = console,
     const result = await backendPromise;
     saveTurn(scope, prompt, result.response);
     archiveEvent(message, prompt, true, result.provider, result.response, scope);
-    await sendResponse(channel, result.response);
+    await sendResponse(channel, result.response, message, !isDirectMessage(message) && !schedulePublicDeletion);
     return { handled: true, reason: 'private_response', provider: result.provider };
   } catch (error) {
     logger.log(`[forge-assist] message handling failed: ${error.message}`);
@@ -83,7 +83,7 @@ async function processPrivateQuery(message, channel, prompt, { logger = console,
 }
 async function handleMessage(message, client, { logger = console, env = process.env } = {}) {
   logMessageDiagnostic(message, client, logger, env); const reason = targetReason(message, client, env); if (reason === 'author_is_bot') return { handled: false, reason }; if (reason === 'not_targeted') return { handled: false, reason }; if (processedMessageIds.has(message.id)) { logger.log('[forge-assist] duplicate message ignored'); return { handled: false, reason: 'duplicate' }; } processedMessageIds.add(message.id);
-  if (reason === 'configured_channel') { await sendPrivateRedirect(message); return { handled: true, reason: 'public_redirect' }; }
+  if (reason === 'configured_channel') { return processPrivateQuery(message, message.channel, cleanPrompt(message, client) || 'Please help with the attached file.', { logger, env, scope: keyFor(message) }); }
   const prompt = cleanPrompt(message, client); if (!prompt && !message.attachments?.size) { await message.reply?.('Hey! Ask me something and I\'ll help.'); return { handled: true, reason: 'empty_prompt' }; }
   const scope = conversationKey(message);
   if (reason === 'direct_mention') { let dm; try { dm = await openPrivateConversation(message, logger); } catch (error) { logger.log(`[forge-assist] private DM could not be started: ${error.message}`); await message.reply?.('I could not start a private DM. Please check your Discord privacy settings and try again.').catch(() => {}); return { handled: true, reason: 'dm_failed' }; } return processPrivateQuery(message, dm, prompt || 'Please help with the attached file.', { logger, env, scope, schedulePublicDeletion: true }); }

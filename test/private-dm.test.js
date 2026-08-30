@@ -67,3 +67,24 @@ test('language detection and provider instruction preserve the user language and
   assert.match(systemPrompt(), /same language and conversational style/);
   assert.match(systemPrompt(), /Do not translate/);
 });
+
+test('only the triggering mention is scheduled for deletion after 15 seconds', async () => {
+  bot._resetForTests();
+  let callback;
+  let delay;
+  let deleted = 0;
+  const message = { id: 'mention-delete-1', delete: async () => { deleted += 1; } };
+  bot.scheduleDeletion(message, { log() {} }, (fn, ms) => { callback = fn; delay = ms; return 'timer'; });
+  assert.equal(delay, 15000);
+  assert.equal(deleted, 0);
+  await callback();
+  assert.equal(deleted, 1);
+});
+
+test('already-deleted mention messages do not crash the bot', async () => {
+  bot._resetForTests();
+  let callback;
+  const message = { id: 'mention-delete-2', delete: async () => { const error = new Error('unknown message'); error.code = 10008; throw error; } };
+  bot.scheduleDeletion(message, { log() {} }, fn => { callback = fn; return 'timer'; });
+  await assert.doesNotReject(callback());
+});

@@ -12,9 +12,15 @@ Discord member
     -> Claude / Kimi / Groq with failover
     -> private Discord DM reply
 
-Configured public-channel message
-    -> privacy redirect to DM
-    -> no public AI request or response
+Configured public-channel message without mention
+    -> Vercel: POST /api/chat
+    -> public-channel reply
+
+Configured public-channel mention
+    -> private DM handoff
+    -> Vercel: POST /api/chat
+    -> private DM reply
+    -> triggering message deletion after ~15 seconds
 
 Wispbyte archive event
     -> Vercel: POST /api/assist/events
@@ -22,7 +28,7 @@ Wispbyte archive event
     -> private FORGE_DATA_CENTER_2_CHAT_ID destination
 ```
 
-The bot processes messages in two private-safe cases: direct messages to Forge Assist, and direct mentions in a guild. A normal message in a channel listed in `FORGE_ASSIST_CHANNEL_IDS` receives only a short public instruction to continue by DM; its question is not sent to AI and no AI response is posted publicly. Messages outside configured channels are ignored unless they directly mention the bot. Bot-authored messages are ignored. DM conversation context is isolated strictly by Discord user ID and capped by `FORGE_ASSIST_CONTEXT_LIMIT`. Responses preserve Hindi, English, and Hinglish naturally. Provider failures are isolated and use the existing Claude/Kimi/Groq fallback sequence.
+The bot processes normal messages in channels listed in `FORGE_ASSIST_CHANNEL_IDS` publicly, replying in the same channel. A direct mention in a public channel is moved to a private DM: the original question is processed once, the AI response is sent only by DM, and the triggering public message is best-effort deleted after approximately 15 seconds. Direct messages are handled privately without requiring a mention. Messages outside configured channels are ignored unless they directly mention the bot. Bot-authored messages are ignored. DM conversation context is isolated strictly by Discord user ID and capped by `FORGE_ASSIST_CONTEXT_LIMIT`. Responses preserve the latest user language and conversational style. Provider failures are isolated and use the existing Claude/Kimi/Groq fallback sequence.
 
 ## Deployment
 
@@ -36,7 +42,7 @@ Run `npm install` and start with `npm start`. Configure `DISCORD_TOKEN`, `FORGE_
 
 ## Data Center 2 archive
 
-Each processed private question is sent to the private Telegram destination with the username, Discord user ID, guild ID when available, question, AI response, timestamp, language, provider, event ID, and attachment names. A compact statistics message accompanies each archive event with query totals tracked by the running Wispbyte process, provider outcomes, language counts, active conversations, and context count. Private questions and responses are never written to Wispbyte logs.
+Each processed question, including public-channel questions and private DM questions, is sent to the private Telegram destination with the username, Discord user ID, guild ID when available, question, AI response, timestamp, language, provider, event ID, and attachment names. A compact statistics message accompanies each archive event with query totals tracked by the running Wispbyte process, provider outcomes, language counts, active conversations, and context count. Private questions and responses are never written to Wispbyte logs.
 
 Attachments sent in a private DM are associated with that Discord user and forwarded through the existing Telegram Data Center 2 archive path using Discord CDN URLs. This supports practical images, videos, PDFs, documents, text files, spreadsheets, archives, and audio where Telegram accepts the file and size. Attachment URLs are not printed in Wispbyte logs and are not exposed in Discord. If Telegram rejects an attachment, the system logs only a safe failure summary; the Discord user still receives the AI answer when the backend succeeds.
 
