@@ -8,7 +8,7 @@ const archiveStats = { totalQueries: 0, successfulQueries: 0, failedQueries: 0, 
 function keyFor(message) { return `${message.guildId || 'dm'}:${message.channelId}:${message.author.id}`; }
 function configuredChannelIds(env = process.env) { return (env.FORGE_ASSIST_CHANNEL_IDS || '').split(',').map(x => x.trim()).filter(Boolean); }
 function targetReason(message, client, env = process.env) { if (message.author.bot) return 'author_is_bot'; const mentioned = message.mentions?.has(client.user); const configured = configuredChannelIds(env).includes(message.channelId); if (mentioned) return 'direct_mention'; if (configured) return 'configured_channel'; return 'not_targeted'; }
-function shouldRespond(message, client, env = process.env) { return targetReason(message, client, env) !== 'not_targeted' && targetReason(message, client, env) !== 'author_is_bot'; }
+function shouldRespond(message, client, env = process.env) { const reason = targetReason(message, client, env); return reason === 'direct_mention' || reason === 'configured_channel'; }
 function logMessageDiagnostic(message, client, logger = console, env = process.env) { const reason = targetReason(message, client, env); logger.log(`[forge-assist] message received: guild=${message.guildId || 'dm'} channel=${message.channelId || 'unknown'} authorBot=${Boolean(message.author?.bot)} targeted=${reason !== 'not_targeted' && reason !== 'author_is_bot'} reason=${reason}`); return reason; }
 function cleanPrompt(message, client) { return message.content.replace(new RegExp(`<@!?${client.user.id}>`, 'g'), '').trim(); }
 function getContext(key) { return conversations.get(key) || []; }
