@@ -47,16 +47,27 @@ async function askBackend(message, prompt, env = process.env, scope = keyFor(mes
   } finally { clearTimeout(timer); }
 }
 
-async function postArchive(event) {
-  const base = (process.env.FORGE_ASSIST_BACKEND_URL || '').replace(/\/$/, '');
-  if (!base || !process.env.TELEGRAM_BOT_TOKEN || !process.env.FORGE_DATA_CENTER_2_CHAT_ID || archivedEventIds.has(event.eventId)) return;
+async function postArchive(event, env = process.env, logger = console) {
+  const base = (env.FORGE_ASSIST_BACKEND_URL || '').replace(/\/$/, '');
+  if (!base) { logger.log('[forge-assist] archive skipped: backend URL is missing'); return { archived: false, skipped: 'backend_url_missing' }; }
+  if (!event || typeof event.eventId !== 'string' || !event.eventId.trim()) { logger.log('[forge-assist] archive skipped: event ID is missing'); return { archived: false, skipped: 'invalid_event' }; }
+  if (archivedEventIds.has(event.eventId)) { logger.log('[forge-assist] archive skipped: event already archived'); return { archived: false, skipped: 'already_archived' }; }
   archivedEventIds.add(event.eventId);
-  try { const response = await fetch(`${base}/api/assist/events`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-forge-assist-secret': process.env.FORGE_ASSIST_API_SECRET || '' }, body: JSON.stringify(event) }); if (!response.ok) throw new Error(`archive returned ${response.status}`); } catch (error) { archivedEventIds.delete(event.eventId); console.error(`[forge-assist] Telegram archive failed: ${error.message}`); }
+  try {
+    const response = await fetch(`${base}/api/assist/events`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-forge-assist-secret': env.FORGE_ASSIST_API_SECRET || '' }, body: JSON.stringify(event) });
+    logger.log(`[forge-assist] archive POST status: ${response.status}`);
+    if (!response.ok) { archivedEventIds.delete(event.eventId); logger.log(`[forge-assist] archive POST failed: HTTP ${response.status}`); return { archived: false, status: response.status }; }
+    return { archived: true, status: response.status };
+  } catch (_error) {
+    archivedEventIds.delete(event.eventId);
+    logger.log('[forge-assist] archive POST failed: network error');
+    return { archived: false, error: 'network_error' };
+  }
 }
 function archiveEvent(message, prompt, success, provider, response = '', scope = keyFor(message)) {
   const attachments = attachmentMetadata(message); const language = languageOf(prompt); const mode = scope.startsWith('dm:') ? 'private_dm' : 'public'; const timestamp = message.createdAt?.toISOString() || new Date().toISOString(); const memberKey = message.author.id; const memberSignature = `${language}|${mode}`; const previousMember = memberState.get(memberKey); const memberEventType = !previousMember ? 'MEMBER_CREATED' : previousMember.signature !== memberSignature ? 'MEMBER_UPDATED' : null; memberState.set(memberKey, { firstSeenAt: previousMember?.firstSeenAt || timestamp, signature: memberSignature }); const sessionId = sessionState.get(scope)?.sessionId || `session:${scope}`; const sessionEventType = sessionState.has(scope) ? null : 'SESSION_STARTED'; if (!sessionState.has(scope)) sessionState.set(scope, { sessionId, createdAt: timestamp }); archiveStats.totalQueries += 1; if (success) archiveStats.successfulQueries += 1; else archiveStats.failedQueries += 1; archiveStats.providers[provider] = archiveStats.providers[provider] || { success: 0, failure: 0 }; archiveStats.providers[provider][success ? 'success' : 'failure'] += 1; archiveStats.languages[language] = (archiveStats.languages[language] || 0) + 1; archiveStats.attachments += attachments.length;
   const eventId = `${message.id}:${success ? 'success' : 'failure'}`;
-  void postArchive({ eventId, messageId: message.id, guildId: message.guildId || null, channelId: message.channelId || message.channel?.id || null, userId: message.author.id, username: message.author.username, displayName: message.member?.displayName || message.author.globalName || message.author.username, question: prompt, response, success, provider, language, timestamp, conversationId: scope, sessionId, mode, memberEventType, sessionEventType, firstSeenAt: previousMember?.firstSeenAt || timestamp, sessionCreatedAt: sessionState.get(scope)?.createdAt || timestamp, totalQueries: archiveStats.totalQueries, successfulQueries: archiveStats.successfulQueries, failedQueries: archiveStats.failedQueries, activeConversations: conversations.size, contextMessageCount: getContext(scope).length, attachments });
+  void postArchive({ eventId, messageId: message.id, guildId: message.guildId || null, channelId: message.channelId || message.channel?.id || null, userId: message.author.id, username: message.author.username, displayName: message.member?.displayName || message.author.globalName || message.author.username, question: prompt, response, success, provider, language, timestamp, conversationId: scope, sessionId, mode, memberEventType, sessionEventType, firstSeenAt: previousMember?.firstSeenAt || timestamp, sessionCreatedAt: sessionState.get(scope)?.createdAt || timestamp, totalQueries: archiveStats.totalQueries, successfulQueries: archiveStats.successfulQueries, failedQueries: archiveStats.failedQueries, activeConversations: conversations.size, contextMessageCount: getContext(scope).length, attachments }, process.env, console);
 }
 function logGuildDiagnostics(client, logger = console, env = process.env) { const user = client.user; const guilds = [...client.guilds.cache.values()]; logger.log(`[forge-assist] logged in as ${user.tag}`); logger.log(`[forge-assist] bot user ID: ${user.id}`); if (env.DISCORD_APPLICATION_ID) logger.log(`[forge-assist] configured application ID matches logged-in bot: ${String(env.DISCORD_APPLICATION_ID).trim() === user.id}`); logger.log(`[forge-assist] guild count: ${guilds.length}`); if (!guilds.length) logger.log('[forge-assist] serving 0 guilds'); for (const guild of guilds) logger.log(`[forge-assist] guild: ${guild.name} (${guild.id})`); return guilds; }
 async function sendPrivateRedirect(message) { await message.reply('For privacy, please continue this conversation with Forge Assist in a direct message (DM).'); }
