@@ -7,10 +7,11 @@ Forge Assist is a separate Discord AI assistant. The Discord Gateway and message
 ```text
 Discord member
     -> Wispbyte: src/bot/index.js
-    -> private Discord DM
     -> Vercel: POST /api/chat
+    -> explicit Discord community context
+    -> optional Brave Search retrieval for current/public questions
     -> Claude / Kimi / Groq with failover
-    -> private Discord DM reply
+    -> grounded Discord reply
 
 Configured public-channel message without mention
     -> Vercel: POST /api/chat
@@ -34,11 +35,11 @@ The bot processes normal messages in channels listed in `FORGE_ASSIST_CHANNEL_ID
 
 ### Vercel
 
-Deploy the repository root as a Vercel project. Serverless entry points are `api/health.js`, `api/chat.js`, and `api/assist/events.js`. Vercel does not host the Discord Gateway or any permanent process. Configure the AI variables, `FORGE_ASSIST_API_SECRET`, `TELEGRAM_BOT_TOKEN`, and `FORGE_DATA_CENTER_2_CHAT_ID`.
+Deploy the repository root as a Vercel project. Serverless entry points are `api/health.js`, `api/chat.js`, and `api/assist/events.js`. Vercel does not host the Discord Gateway or any permanent process. Configure the AI variables, `FORGE_ASSIST_API_SECRET`, `TELEGRAM_BOT_TOKEN`, and `FORGE_DATA_CENTER_2_CHAT_ID`. For optional current/public web search, configure `WEB_SEARCH_ENABLED=true`, `BRAVE_SEARCH_API_KEY`, and optionally `WEB_SEARCH_TIMEOUT_MS` in Vercel only.
 
 ### Wispbyte
 
-Run `npm install` and start with `npm start`. Configure `DISCORD_TOKEN`, `FORGE_ASSIST_BACKEND_URL`, `FORGE_ASSIST_API_SECRET`, `TELEGRAM_BOT_TOKEN`, and `FORGE_DATA_CENTER_2_CHAT_ID`. The Telegram variables are used only to determine whether archiving is enabled; the bot sends archive data through the Vercel backend, which owns the Telegram API call. Enable Discord Message Content Intent.
+Run `npm install` and start with `npm start`. Configure `DISCORD_TOKEN`, `FORGE_ASSIST_BACKEND_URL`, and `FORGE_ASSIST_API_SECRET`. Do not place `BRAVE_SEARCH_API_KEY` in Wispbyte. Enable Discord Message Content Intent.
 
 ## Data Center 2 archive
 
@@ -50,7 +51,9 @@ The archive event ID is derived from the Discord message ID and outcome, and an 
 
 ## API contract
 
-`POST /api/chat` accepts `{ "message": "...", "context": [...] }` and returns `{ "response": "...", "provider": "..." }`. `POST /api/assist/events` accepts the archive event and its attachment URL metadata. Both routes use the `x-forge-assist-secret` header when `FORGE_ASSIST_API_SECRET` is configured. `GET /api/health` is public and returns a small status object without secrets.
+`POST /api/chat` accepts `{ "message": "...", "context": [...], "community": {...} }` and returns `{ "response": "...", "provider": "...", "route": "...", "language": "...", "sources": [...] }`. `POST /api/assist/events` accepts the archive event and its attachment URL metadata. The chat route uses the `x-forge-assist-secret` header when `FORGE_ASSIST_API_SECRET` is configured. `GET /api/health` is public and returns a small status object without secrets.
+
+Community context is limited to explicit guild/channel metadata and public role names; role names are never treated as personal attributes. Web search is selective and server-side: stable general questions do not search, while current/latest/news/explicit online-search questions may use Brave Search. Search snippets are bounded and passed to the existing provider as grounded context with source URLs.
 
 ## Environment variables
 
@@ -58,4 +61,4 @@ Required or optional variables are documented in `.env.example`. Keep all values
 
 ## Scope and limitations
 
-Forge Tech Reporter, Forge Guardian, and unrelated existing features are not modified. Internet search is not implemented. Real Discord, Telegram, and AI-provider calls require deployment credentials and were not executed in this sandbox; unit tests and syntax checks are run locally.
+Forge Tech Reporter, Forge Guardian, and unrelated existing features are not modified. Telegram remains persistence-only; no Telegram DM/reply or owner-approval workflow is implemented. Brave Search is optional and disabled by default. If its key is missing, the provider fails, times out, or returns no results, Forge Assist does not crash or invent current facts; it falls back to the existing AI flow with no web evidence. Real Discord, Telegram, web-search, and AI-provider calls require deployment credentials and were not executed in this sandbox; unit tests and syntax checks are run locally.

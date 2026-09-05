@@ -46,11 +46,11 @@ function openAiCompatible(name, baseUrl, apiKey, model, prompt, context, timeout
   }).catch(error => { throw new ProviderError(name, error.message); });
 }
 
-function claude(apiKey, model, prompt, context, timeoutMs) {
+function claude(apiKey, model, prompt, context, timeoutMs, system = systemPrompt()) {
   return requestJson('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-    body: JSON.stringify({ model, max_tokens: 1200, system: systemPrompt(), messages: messagesFor(prompt, context) })
+    body: JSON.stringify({ model, max_tokens: 1200, system, messages: messagesFor(prompt, context) })
   }, timeoutMs).then(body => {
     const content = body.content?.find(item => item.type === 'text')?.text;
     if (typeof content !== 'string' || !content.trim()) throw new Error('malformed provider response');
@@ -59,7 +59,7 @@ function claude(apiKey, model, prompt, context, timeoutMs) {
 }
 
 function systemPrompt() {
-  return 'You are Forge Assist, a friendly Discord technical assistant. Respond in the same language and conversational style used by the user. Preserve English, Hindi, Hinglish, Spanish, French, German, and other languages when detectable. If the user mixes languages, follow the dominant conversational language and preserve the natural mix. Do not translate or change the user\'s language unless explicitly requested. Be concise for simple questions and practical for technical questions, using code blocks when useful. Do not claim to be human. Refuse requests that enable credential theft, destructive malware, unauthorized access, or real-world harm, and redirect to safe defensive learning.';
+  return 'You are Forge Assist, a friendly Discord technical assistant. Respond in the same language and conversational style used by the user. Preserve English, Hindi, Hinglish, Spanish, French, German, and other languages when detectable. If the user mixes languages, follow the dominant conversational language and preserve the natural mix. Do not translate or change the user\'s language unless explicitly requested. Be concise for simple questions and practical for technical questions, using code blocks when useful. Do not claim to be human. Refuse requests that enable credential theft, destructive malware, unauthorized access, or real-world harm, and redirect to safe defensive learning. When a grounded request includes source instructions, obey those source boundaries and do not invent missing community or current information.';
 }
 
 function configuredProviders(env = process.env) {
@@ -72,10 +72,10 @@ function configuredProviders(env = process.env) {
   return definitions;
 }
 
-async function generateAnswer({ prompt, context = [], env = process.env, logger = console }) {
+async function generateAnswer({ prompt, context = [], system, env = process.env, logger = console }) {
   const timeoutMs = Number(env.AI_PROVIDER_TIMEOUT_MS || DEFAULT_TIMEOUT_MS);
   const definitions = {
-    claude: env.CLAUDE_API_KEY ? () => claude(env.CLAUDE_API_KEY, env.CLAUDE_MODEL || 'claude-3-5-haiku-latest', prompt, context, timeoutMs) : null,
+    claude: env.CLAUDE_API_KEY ? () => claude(env.CLAUDE_API_KEY, env.CLAUDE_MODEL || 'claude-3-5-haiku-latest', prompt, context, timeoutMs, system || systemPrompt()) : null,
     kimi: env.KIMI_API_KEY ? () => openAiCompatible('kimi', env.KIMI_BASE_URL || 'https://api.moonshot.ai/v1', env.KIMI_API_KEY, env.KIMI_MODEL || 'moonshot-v1-8k', prompt, context, timeoutMs) : null,
     groq: env.GROQ_API_KEY ? () => openAiCompatible('groq', env.GROQ_BASE_URL || 'https://api.groq.com/openai/v1', env.GROQ_API_KEY, env.GROQ_MODEL || 'llama-3.1-8b-instant', prompt, context, timeoutMs) : null
   };
