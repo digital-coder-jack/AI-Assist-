@@ -7,7 +7,6 @@ const DELETE_DELAY_MS = 15000;
 const contextLimit = Math.max(2, Number(process.env.FORGE_ASSIST_CONTEXT_LIMIT || 12));
 const conversations = new Map();
 const archivedEventIds = new Set();
-const contactEventIds = new Set();
 const processedMessageIds = new Set();
 const deletionTimers = new Set();
 const archiveStats = { totalQueries: 0, successfulQueries: 0, failedQueries: 0, attachments: 0, providers: {}, languages: {} };
@@ -66,37 +65,6 @@ async function postArchive(event, env = process.env, logger = console) {
     return { archived: false, error: 'network_error' };
   }
 }
-function contactPromptOf(prompt) { const match = String(prompt || '').match(/^\/(?:contact|owner)\b(?:\s+([\s\S]+))?$/i); return match ? (match[1] || '') : null; }
-async function postContact(message, prompt, env = process.env, scope = keyFor(message), logger = console) {
-  const base = (env.FORGE_ASSIST_BACKEND_URL || '').replace(/\/$/, '');
-  const eventId = `contact:${message.id}`;
-  if (!base) return { delivered: false, skipped: 'backend_url_missing' };
-  if (contactEventIds.has(eventId)) return { delivered: true, duplicate: true, requestId: null };
-  const text = String(prompt || '').trim();
-  if (!text) return { delivered: false, error: 'message_required' };
-  contactEventIds.add(eventId);
-  const event = { eventId, messageId: message.id, sessionId: `contact:${scope}`, userId: message.author.id, username: message.author.username || null, displayName: message.member?.displayName || message.author.globalName || message.author.username || null, guildId: message.guildId || null, guildName: message.guild?.name || null, discordChannelId: message.channelId || message.channel?.id, channelName: message.channel?.name || null, message: text };
-  try {
-    const response = await fetch(`${base}/api/assist/contact`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-forge-assist-secret': env.FORGE_ASSIST_API_SECRET || '' }, body: JSON.stringify(event) });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok || !data.delivered) { contactEventIds.delete(eventId); return { delivered: false, status: response.status, error: data.error || 'contact_delivery_failed' }; }
-    return data;
-  } catch (error) {
-    contactEventIds.delete(eventId);
-    logger.log(`[forge-assist] owner contact failed: ${error.message}`);
-    return { delivered: false, error: 'network_error' };
-  }
-}
-async function processOwnerContact(message, channel, prompt, { logger = console, env = process.env, scope = keyFor(message), schedulePublicDeletion = false } = {}) {
-  const result = await postContact(message, prompt, env, scope, logger);
-  if (result.delivered) {
-    if (schedulePublicDeletion) scheduleDeletion(message, logger);
-    await channel.send(`📩 Your message has been sent to the owner.\\n\\nRequest ID: ${result.requestId || 'created'}\\n\\nThe owner will reply when available.`).catch(error => logger.log(`[forge-assist] contact acknowledgement failed: ${error.message}`));
-    return { handled: true, reason: 'owner_contact_sent', requestId: result.requestId };
-  }
-  await channel.send('I could not deliver your message to the owner right now. Please try again later.').catch(error => logger.log(`[forge-assist] contact failure notice failed: ${error.message}`));
-  return { handled: true, reason: 'owner_contact_failed' };
-}
 function archiveEvent(message, prompt, success, provider, response = '', scope = keyFor(message)) {
   const attachments = attachmentMetadata(message); const language = languageOf(prompt); const mode = scope.startsWith('dm:') ? 'private_dm' : 'public'; const timestamp = message.createdAt?.toISOString() || new Date().toISOString(); const memberKey = message.author.id; const memberSignature = `${language}|${mode}`; const previousMember = memberState.get(memberKey); const memberEventType = !previousMember ? 'MEMBER_CREATED' : previousMember.signature !== memberSignature ? 'MEMBER_UPDATED' : null; memberState.set(memberKey, { firstSeenAt: previousMember?.firstSeenAt || timestamp, signature: memberSignature }); const sessionId = sessionState.get(scope)?.sessionId || `session:${scope}`; const sessionEventType = sessionState.has(scope) ? null : 'SESSION_STARTED'; if (!sessionState.has(scope)) sessionState.set(scope, { sessionId, createdAt: timestamp }); archiveStats.totalQueries += 1; if (success) archiveStats.successfulQueries += 1; else archiveStats.failedQueries += 1; archiveStats.providers[provider] = archiveStats.providers[provider] || { success: 0, failure: 0 }; archiveStats.providers[provider][success ? 'success' : 'failure'] += 1; archiveStats.languages[language] = (archiveStats.languages[language] || 0) + 1; archiveStats.attachments += attachments.length;
   const eventId = `${message.id}:${success ? 'success' : 'failure'}`;
@@ -129,16 +97,8 @@ async function processPrivateQuery(message, channel, prompt, { logger = console,
 }
 async function handleMessage(message, client, { logger = console, env = process.env } = {}) {
   logMessageDiagnostic(message, client, logger, env); const reason = targetReason(message, client, env); if (reason === 'author_is_bot') return { handled: false, reason }; if (reason === 'not_targeted') return { handled: false, reason }; if (processedMessageIds.has(message.id)) { logger.log('[forge-assist] duplicate message ignored'); return { handled: false, reason: 'duplicate' }; } processedMessageIds.add(message.id);
-  const prompt = cleanPrompt(message, client);
-  const contactPrompt = contactPromptOf(prompt);
-  if (contactPrompt !== null) {
-    if (!contactPrompt) { await message.reply?.('Use `/contact your message to the owner`.').catch(() => {}); return { handled: true, reason: 'contact_message_required' }; }
-    const scope = conversationKey(message);
-    if (reason === 'direct_mention') { let dm; try { dm = await openPrivateConversation(message, logger); } catch (error) { logger.log(`[forge-assist] private DM could not be started: ${error.message}`); await message.reply?.('I could not start a private DM for owner contact.').catch(() => {}); return { handled: true, reason: 'dm_failed' }; } return processOwnerContact(message, dm, contactPrompt, { logger, env, scope, schedulePublicDeletion: true }); }
-    return processOwnerContact(message, message.channel, contactPrompt, { logger, env, scope: keyFor(message) });
-  }
-  if (reason === 'configured_channel') { return processPrivateQuery(message, message.channel, prompt || 'Please help with the attached file.', { logger, env, scope: keyFor(message) }); }
-  if (!prompt && !message.attachments?.size) { await message.reply?.('Hey! Ask me something and I\'ll help.'); return { handled: true, reason: 'empty_prompt' }; }
+  if (reason === 'configured_channel') { return processPrivateQuery(message, message.channel, cleanPrompt(message, client) || 'Please help with the attached file.', { logger, env, scope: keyFor(message) }); }
+  const prompt = cleanPrompt(message, client); if (!prompt && !message.attachments?.size) { await message.reply?.('Hey! Ask me something and I\'ll help.'); return { handled: true, reason: 'empty_prompt' }; }
   const scope = conversationKey(message);
   if (reason === 'direct_mention') { let dm; try { dm = await openPrivateConversation(message, logger); } catch (error) { logger.log(`[forge-assist] private DM could not be started: ${error.message}`); await message.reply?.('I could not start a private DM. Please check your Discord privacy settings and try again.').catch(() => {}); return { handled: true, reason: 'dm_failed' }; } return processPrivateQuery(message, dm, prompt || 'Please help with the attached file.', { logger, env, scope, schedulePublicDeletion: true }); }
   return processPrivateQuery(message, message.channel, prompt || 'Please help with the attached file.', { logger, env, scope });
@@ -147,4 +107,4 @@ function registerMessageHandlers(client, { logger = console, env = process.env }
 function createBot() { const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.DirectMessages], partials: [Partials.Channel] }); client.once('ready', () => logGuildDiagnostics(client)); return registerMessageHandlers(client); }
 async function startBot({ env = process.env, botFactory = createBot, logger = console } = {}) { const token = readDiscordToken(env); logTokenDiagnostic(token, logger); logChannelDiagnostic(readConfiguredChannelIds(env), logger); if (!token) throw new Error('DISCORD_TOKEN is required'); return botFactory().login(token); }
 if (require.main === module) startBot().catch(error => { console.error(`[forge-assist] startup failed: ${error.message}`); process.exitCode = 1; });
-module.exports = { createBot, startBot, logGuildDiagnostics, logMessageDiagnostic, registerMessageHandlers, handleMessage, processPrivateQuery, scheduleDeletion, splitMessage, shouldRespond, targetReason, conversations, archiveEvent, postArchive, archiveStats, _test: { processedMessageIds, deletionTimers, sendPrivateRedirect, openPrivateConversation, keyFor, conversationKey, isDirectMessage, attachmentMetadata, contactEventIds }, _internals: { askBackend, cleanPrompt, languageOf, getContext, saveTurn, contactPromptOf, postContact }, _resetForTests: () => { conversations.clear(); processedMessageIds.clear(); archivedEventIds.clear(); contactEventIds.clear(); deletionTimers.clear(); archiveStats.totalQueries = 0; archiveStats.successfulQueries = 0; archiveStats.failedQueries = 0; archiveStats.attachments = 0; archiveStats.providers = {}; archiveStats.languages = {}; memberState.clear(); sessionState.clear(); resetOnboardingForTests(); } };
+module.exports = { createBot, startBot, logGuildDiagnostics, logMessageDiagnostic, registerMessageHandlers, handleMessage, processPrivateQuery, scheduleDeletion, splitMessage, shouldRespond, targetReason, conversations, archiveEvent, postArchive, archiveStats, _test: { processedMessageIds, deletionTimers, sendPrivateRedirect, openPrivateConversation, keyFor, conversationKey, isDirectMessage, attachmentMetadata }, _internals: { askBackend, cleanPrompt, languageOf, getContext, saveTurn }, _resetForTests: () => { conversations.clear(); processedMessageIds.clear(); archivedEventIds.clear(); deletionTimers.clear(); archiveStats.totalQueries = 0; archiveStats.successfulQueries = 0; archiveStats.failedQueries = 0; archiveStats.attachments = 0; archiveStats.providers = {}; archiveStats.languages = {}; memberState.clear(); sessionState.clear(); resetOnboardingForTests(); } };
