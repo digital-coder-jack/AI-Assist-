@@ -57,6 +57,18 @@ test('grounded preparation combines community and mocked web sources without liv
   assert.match(prepared.prompt, /not personal attributes/);
 });
 
+test('exact Hinglish self-description request is Forge Assist identity-safe', async () => {
+  const prompt = 'Acha toh aap apne baare mai kuch bataye';
+  assert.equal(retrieval.identityIntent(prompt), 'introduction');
+  const language = retrieval.detectLanguageStyle(prompt).language;
+  const answer = retrieval.identityResponse('introduction', language);
+  assert.equal(language, 'Hinglish');
+  assert.match(answer, /Forge Assist/);
+  assert.match(answer, /Developer Forge/);
+  assert.match(answer, /Jack/);
+  assert.doesNotMatch(answer, /GPT|OpenAI|ChatGPT|Claude|Groq|Kimi|training|trained|2023|cutoff/i);
+});
+
 test('identity intent and localized responses avoid provider identity leakage', () => {
   assert.equal(retrieval.identityIntent('Who are you?'), 'introduction');
   assert.match(retrieval.identityResponse('introduction', 'English'), /Forge Assist/);
@@ -64,7 +76,21 @@ test('identity intent and localized responses avoid provider identity leakage', 
   assert.match(retrieval.identityResponse('creator', 'English'), /Jack/);
   assert.doesNotMatch(retrieval.identityResponse('creator', 'English'), /trained OpenAI|created Claude/i);
   assert.equal(retrieval.identityIntent('Are you ChatGPT?'), 'provider');
+  assert.equal(retrieval.identityIntent('Which model are you using?'), 'provider');
   assert.doesNotMatch(retrieval.identityResponse('provider', 'English', 'groq'), /I am ChatGPT|I am OpenAI/i);
+});
+
+test('chat backend answers the exact Hinglish identity case before any provider call', async () => {
+  const previous = { ...process.env };
+  Object.assign(process.env, { FORGE_ASSIST_API_SECRET: 'secret', WEB_SEARCH_ENABLED: 'false', GROQ_API_KEY: '', KIMI_API_KEY: '', CLAUDE_API_KEY: '' });
+  try {
+    const result = response();
+    await chat({ method: 'POST', headers: { 'x-forge-assist-secret': 'secret' }, body: { message: 'Acha toh aap apne baare mai kuch bataye' } }, result);
+    assert.equal(result.statusCode, 200);
+    assert.match(result.body.response, /Forge Assist/);
+    assert.match(result.body.response, /Developer Forge/);
+    assert.doesNotMatch(result.body.response, /GPT|OpenAI|ChatGPT|Claude|Groq|Kimi|training|2023/i);
+  } finally { process.env = previous; }
 });
 
 test('chat backend answers identity questions directly and provider questions accurately', async () => {
