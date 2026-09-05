@@ -1,5 +1,5 @@
-const DEFAULT_SEARCH_TIMEOUT_MS = 5000;
-const MAX_RESULTS = 4;
+const DEFAULT_SEARCH_TIMEOUT_MS = 6000;
+const MAX_RESULTS = 5;
 
 function normalizeText(value, max = 1000) {
   return String(value ?? '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
@@ -51,23 +51,19 @@ function routeQuestion(prompt, community = {}) {
 }
 
 async function searchWeb(query, { env = process.env, fetchImpl = fetch } = {}) {
-  if (String(env.WEB_SEARCH_ENABLED).toLowerCase() !== 'true') return { enabled: false, results: [], reason: 'disabled' };
-  if (!env.BRAVE_SEARCH_API_KEY) return { enabled: false, results: [], reason: 'api_key_missing' };
+  if (String(env.WEB_SEARCH_ENABLED).toLowerCase() !== 'true') return { enabled: false, results: [], reason: 'disabled', provider: 'tavily' };
+  if (!env.TAVILY_API_KEY) return { enabled: false, results: [], reason: 'api_key_missing', provider: 'tavily' };
   const timeoutMs = Number(env.WEB_SEARCH_TIMEOUT_MS || DEFAULT_SEARCH_TIMEOUT_MS);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const url = new URL('https://api.search.brave.com/res/v1/web/search');
-    url.searchParams.set('q', normalizeText(query, 400));
-    url.searchParams.set('count', String(MAX_RESULTS));
-    url.searchParams.set('safesearch', 'moderate');
-    const response = await fetchImpl(url, { headers: { accept: 'application/json', 'x-subscription-token': env.BRAVE_SEARCH_API_KEY }, signal: controller.signal });
+    const response = await fetchImpl('https://api.tavily.com/search', { method: 'POST', headers: { accept: 'application/json', 'content-type': 'application/json', authorization: `Bearer ${env.TAVILY_API_KEY}` }, body: JSON.stringify({ query: normalizeText(query, 1200), search_depth: 'basic', max_results: MAX_RESULTS, include_answer: false, include_raw_content: false, topic: /\b(news|today|aaj|recent|latest)\b/i.test(query) ? 'news' : 'general' }), signal: controller.signal });
     const body = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(`search provider returned ${response.status}`);
-    const results = (body.web?.results || []).slice(0, MAX_RESULTS).map(item => ({ title: normalizeText(item.title, 180), url: normalizeText(item.url, 500), description: normalizeText(item.description, 600), age: normalizeText(item.age, 80) })).filter(item => item.title && /^https?:\/\//.test(item.url));
-    return { enabled: true, results, reason: results.length ? 'ok' : 'empty' };
+    const results = (body.results || []).slice(0, MAX_RESULTS).map(item => ({ title: normalizeText(item.title, 180), url: normalizeText(item.url, 500), description: normalizeText(item.content || item.raw_content || item.description, 700), score: Number.isFinite(Number(item.score)) ? Number(item.score) : null, publishedDate: normalizeText(item.published_date, 80) })).filter(item => item.title && item.description && /^https?:\/\//.test(item.url)).sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+    return { enabled: true, results, reason: results.length ? 'ok' : 'empty', provider: 'tavily' };
   } catch (error) {
-    return { enabled: true, results: [], reason: error.name === 'AbortError' ? 'timeout' : 'failed' };
+    return { enabled: true, results: [], reason: error.name === 'AbortError' ? 'timeout' : 'failed', provider: 'tavily' };
   } finally { clearTimeout(timer); }
 }
 
@@ -84,7 +80,21 @@ function formatCommunity(community) {
 }
 function formatWeb(results) {
   if (!results.length) return 'No reliable web results were available.';
-  return results.map((item, index) => `[${index + 1}] ${item.title}\nURL: ${item.url}\nSnippet: ${item.description}${item.age ? `\nDate: ${item.age}` : ''}`).join('\n\n');
+  return results.map((item, index) => `[${index + 1}] ${item.title}\nURL: ${item.url}\nSnippet: ${item.description}${item.publishedDate ? `\nDate: ${item.publishedDate}` : ''}`).join('\n\n');
+}
+function identityIntent(prompt = '') {
+  const lower = String(prompt).toLowerCase().trim();
+  if (/\b(who are you|what are you|what is forge assist|introduce yourself|what do you do|why are you here)\b/.test(lower)) return 'introduction';
+  if (/\b(who made you|who created you|who built you|who is behind you)\b/.test(lower)) return 'creator';
+  if (/\b(are you openai|are you chatgpt|are you claude|are you groq|are you kimi|which model|which api|what provider|what ai service)\b/.test(lower)) return 'provider';
+  return null;
+}
+function identityResponse(intent, language, provider = '') {
+  const hinglish = language === 'Hinglish' || language === 'Mixed Hindi-English';
+  if (intent === 'introduction') return hinglish ? 'Main Forge Assist hoon, Developer Forge community ka AI assistant. Main members ke questions, coding, tech aur community-related cheezon mein help karta hoon.' : language === 'Hindi' ? 'मैं Forge Assist हूँ, Developer Forge community का AI assistant। मैं members के सवालों, coding, technology और community-related topics में मदद करता हूँ।' : "I'm Forge Assist, the AI assistant for the Developer Forge community. I help members with coding, technology, community information, and other useful topics.";
+  if (intent === 'creator') return hinglish ? 'Mujhe Jack ne build/configure kiya hai — woh Developer Forge community admin hain. Unhone underlying AI model train nahi kiya.' : language === 'Hindi' ? 'मुझे Jack ने build/configure किया है — वे Developer Forge community admin हैं। उन्होंने underlying AI model train नहीं किया है।' : 'Jack, the Developer Forge community admin, built and configured me. He did not train the underlying AI model.';
+  const providerName = provider || 'different AI services';
+  return hinglish ? `Main Forge Assist hoon, Developer Forge community ka AI assistant. Main behind the scenes ${providerName} use kar sakta hoon; ye implementation detail hai, meri identity nahi.` : language === 'Hindi' ? `मैं Forge Assist हूँ, Developer Forge community का AI assistant। मैं behind the scenes ${providerName} use कर सकता हूँ; यह implementation detail है, मेरी identity नहीं।` : `I'm Forge Assist, the AI assistant for the Developer Forge community. For this request, the configured provider is ${providerName}; that is an implementation detail, not my identity.`;
 }
 function buildGrounding({ prompt, context = [], community = {}, web = {} }) {
   const language = detectLanguageStyle(prompt);
@@ -107,4 +117,4 @@ async function prepareRequest({ prompt, context = [], community = {}, env = proc
   return { prompt: buildGrounding({ prompt, context, community: safeCommunity, web }), context: [], community: safeCommunity, web, route, language: detectLanguageStyle(prompt) };
 }
 
-module.exports = { normalizeText, detectLanguageStyle, sanitizeCommunity, hasCommunityData, communityRequested, webRequested, routeQuestion, searchWeb, formatCommunity, formatWeb, buildGrounding, prepareRequest };
+module.exports = { normalizeText, detectLanguageStyle, sanitizeCommunity, hasCommunityData, communityRequested, webRequested, routeQuestion, searchWeb, formatCommunity, formatWeb, identityIntent, identityResponse, buildGrounding, prepareRequest };

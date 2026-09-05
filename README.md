@@ -9,7 +9,7 @@ Discord member
     -> Wispbyte: src/bot/index.js
     -> Vercel: POST /api/chat
     -> explicit Discord community context
-    -> optional Brave Search retrieval for current/public questions
+    -> optional Tavily web search retrieval for current/public questions
     -> Claude / Kimi / Groq with failover
     -> grounded Discord reply
 
@@ -35,11 +35,11 @@ The bot processes normal messages in channels listed in `FORGE_ASSIST_CHANNEL_ID
 
 ### Vercel
 
-Deploy the repository root as a Vercel project. Serverless entry points are `api/health.js`, `api/chat.js`, and `api/assist/events.js`. Vercel does not host the Discord Gateway or any permanent process. Configure the AI variables, `FORGE_ASSIST_API_SECRET`, `TELEGRAM_BOT_TOKEN`, and `FORGE_DATA_CENTER_2_CHAT_ID`. For optional current/public web search, configure `WEB_SEARCH_ENABLED=true`, `BRAVE_SEARCH_API_KEY`, and optionally `WEB_SEARCH_TIMEOUT_MS` in Vercel only.
+Deploy the repository root as a Vercel project. Serverless entry points are `api/health.js`, `api/chat.js`, and `api/assist/events.js`. Vercel does not host the Discord Gateway or any permanent process. Configure the AI variables, `FORGE_ASSIST_API_SECRET`, `TELEGRAM_BOT_TOKEN`, and `FORGE_DATA_CENTER_2_CHAT_ID`. For optional current/public web search, configure `WEB_SEARCH_ENABLED=true`, `TAVILY_API_KEY`, and optionally `WEB_SEARCH_TIMEOUT_MS` in Vercel only. Keep `TAVILY_API_KEY` in Vercel only.
 
 ### Wispbyte
 
-Run `npm install` and start with `npm start`. Configure `DISCORD_TOKEN`, `FORGE_ASSIST_BACKEND_URL`, and `FORGE_ASSIST_API_SECRET`. Do not place `BRAVE_SEARCH_API_KEY` in Wispbyte. Enable Discord Message Content Intent.
+Run `npm install` and start with `npm start`. Configure `DISCORD_TOKEN`, `FORGE_ASSIST_BACKEND_URL`, and `FORGE_ASSIST_API_SECRET`. Do not place `TAVILY_API_KEY` in Wispbyte. Enable Discord Message Content Intent.
 
 ## Data Center 2 archive
 
@@ -53,7 +53,7 @@ The archive event ID is derived from the Discord message ID and outcome, and an 
 
 `POST /api/chat` accepts `{ "message": "...", "context": [...], "community": {...} }` and returns `{ "response": "...", "provider": "...", "route": "...", "language": "...", "sources": [...] }`. `POST /api/assist/events` accepts the archive event and its attachment URL metadata. The chat route uses the `x-forge-assist-secret` header when `FORGE_ASSIST_API_SECRET` is configured. `GET /api/health` is public and returns a small status object without secrets.
 
-Community context is limited to explicit guild/channel metadata and public role names; role names are never treated as personal attributes. Web search is selective and server-side: stable general questions do not search, while current/latest/news/explicit online-search questions may use Brave Search. Search snippets are bounded and passed to the existing provider as grounded context with source URLs.
+Community context is limited to explicit guild/channel metadata and public role names; role names are never treated as personal attributes. Web search is selective and server-side: stable general questions do not search, while current/latest/news/explicit online-search questions may use Tavily. Search snippets are bounded and passed to the existing provider as grounded context with source URLs. Forge Assist introduces itself only when asked, identifies itself as the Developer Forge assistant, attributes its configuration/build to Jack as the Developer Forge community admin, and does not present Claude, Kimi, Groq, ChatGPT, or OpenAI as its public identity.
 
 ## Environment variables
 
@@ -61,4 +61,4 @@ Required or optional variables are documented in `.env.example`. Keep all values
 
 ## Scope and limitations
 
-Forge Tech Reporter, Forge Guardian, and unrelated existing features are not modified. Telegram remains persistence-only; no Telegram DM/reply or owner-approval workflow is implemented. Brave Search is optional and disabled by default. If its key is missing, the provider fails, times out, or returns no results, Forge Assist does not crash or invent current facts; it falls back to the existing AI flow with no web evidence. Real Discord, Telegram, web-search, and AI-provider calls require deployment credentials and were not executed in this sandbox; unit tests and syntax checks are run locally.
+Forge Tech Reporter, Forge Guardian, and unrelated existing features are not modified. Telegram remains persistence-only; no Telegram DM/reply or owner-approval workflow is implemented. Tavily web search is optional and disabled by default. If its key is missing, the provider fails, times out, or returns no results, Forge Assist does not crash or invent current facts; it falls back to the existing AI flow with no web evidence. Real Discord, Telegram, web-search, and AI-provider calls require deployment credentials and were not executed in this sandbox; unit tests and syntax checks are run locally.
