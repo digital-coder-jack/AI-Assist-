@@ -151,12 +151,17 @@ function memoryRecordText(event) {
   ], { timestamp: event.timestamp, metadata: internalMetadata(event, { record_type: 'MEMORY_RECORD', memory_id: memory.id || event.memoryId, memory_action: event.memoryAction || 'UPSERT' }) });
 }
 
+function onboardingAvatarUrl(event) {
+  const avatar = event.avatar || {};
+  return avatar.member_url || avatar.user_url || null;
+}
 function onboardingRecordText(event) {
   const profile = event.profile || event.onboarding || {};
   return card('👤 Community Profile Record', [
     `👤 User: ${display(event.username || event.displayName || event.globalName)}`,
     `🆔 Discord ID: ${display(event.discordUserId)}`,
     `🏠 Community: ${display(event.guildName || event.guildId)}`,
+    `🖼 Profile picture: ${display(onboardingAvatarUrl(event), 'Not available')}`,
     `🏷 Roles: ${Array.isArray(event.roles) && event.roles.length ? event.roles.join(', ') : 'None provided'}`,
     `💼 Work / professional information: ${display(profile.work || profile.professional || profile.profession, 'Not provided')}`,
     `🧠 Experience: ${display(profile.experience, 'Not provided')}`,
@@ -195,4 +200,4 @@ async function archiveEvent(event, env = process.env) {
   return { archived: true, eventId: event.eventId };
 }
 
-module.exports = { archiveEvent, config, chunk, archiveRecord, parseArchiveRecord, normalizeContent, istTimestamp, memberRecordText, sessionRecordText, queryRecordText, conversationRecordText, statsText, onboardingRecordText, memoryRecordText, SCHEMA_VERSION };
+module.exports = { archiveEvent, config, chunk, archiveRecord, parseArchiveRecord, normalizeContent, istTimestamp, memberRecordText, sessionRecordText, queryRecordText, conversationRecordText, statsText, onboardingRecordText, onboardingAvatarUrl, memoryRecordText, SCHEMA_VERSION };
