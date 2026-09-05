@@ -138,6 +138,17 @@ function statsText(event) {
   ], { timestamp: event.timestamp, metadata: internalMetadata(event, { record_type: 'SYSTEM_EVENT_RECORD', event_type: 'QUERY_STATUS' }) });
 }
 
+function contactRequestRecordText(event) {
+  return card('📩 Contact Request', [
+    `👤 User: ${event.username ? `@${event.username}` : display(event.displayName || event.userId)}`,
+    `🆔 Discord ID: ${display(event.userId)}`,
+    `🏠 Community: ${display(event.guildName || event.guildId, 'Direct message')}`,
+    `📍 Channel: ${display(event.channelName || event.channelId)}`,
+    '', '💬 Initial Message:', display(normalizeContent(event.message)),
+    '', `🆔 Request ID: ${display(event.requestId)}`, `📊 Status: ${display(event.status, 'WAITING_FOR_OWNER')}`,
+  ], { timestamp: event.createdAt || event.lastActivityAt, metadata: internalMetadata(event, { record_type: 'CONTACT_REQUEST', request_id: event.requestId, session_id: event.sessionId, owner_chat_id: event.ownerChatId }) });
+}
+
 function onboardingRecordText(event) {
   const profile = event.profile || event.onboarding || {};
   return card('👤 Community Profile Record', [
@@ -158,6 +169,10 @@ async function sendRecord(text, chatId, env) {
 
 async function archiveEvent(event, env = process.env) {
   const { chatId } = config(env);
+  if (event.type === 'CONTACT_REQUEST') {
+    await sendRecord(contactRequestRecordText(event), chatId, env);
+    return { archived: true, eventId: event.eventId || event.requestId };
+  }
   if (event.type === 'MEMBER_ONBOARDING') {
     await sendRecord(onboardingRecordText(event), chatId, env);
     return { archived: true, eventId: event.eventId };
@@ -178,4 +193,4 @@ async function archiveEvent(event, env = process.env) {
   return { archived: true, eventId: event.eventId };
 }
 
-module.exports = { archiveEvent, config, chunk, archiveRecord, parseArchiveRecord, normalizeContent, istTimestamp, memberRecordText, sessionRecordText, queryRecordText, conversationRecordText, statsText, onboardingRecordText, SCHEMA_VERSION };
+module.exports = { archiveEvent, config, chunk, archiveRecord, parseArchiveRecord, normalizeContent, istTimestamp, memberRecordText, sessionRecordText, queryRecordText, conversationRecordText, statsText, contactRequestRecordText, onboardingRecordText, SCHEMA_VERSION };
