@@ -31,7 +31,7 @@ test('onboarding updates are detected from available member changes', () => { as
 
 test('onboarding capture is idempotent for the same member data and event type during runtime', async () => { resetOnboardingForTests(); const calls = []; const options = { postArchive: async event => calls.push(event), env: {}, logger: { log() {} } }; const first = await captureMemberOnboarding(member(), options); const second = await captureMemberOnboarding(member(), options); assert.equal(first.archived, true); assert.equal(second.skipped, 'duplicate_event'); assert.equal(calls.length, 1); });
 
-test('onboarding archive format is separate from conversation records and contains no AI fields', async () => { const event = await buildOnboardingEvent(member()); const text = onboardingRecordText(event); assert.match(text, /record_type=MEMBER_ONBOARDING/); assert.match(text, /discord_user_id="user-1"/); assert.match(text, /onboarding=/); assert.doesNotMatch(text, /question=|response=|provider=|CONVERSATION_RECORD/); });
+test('onboarding archive format is separate from conversation records and contains no AI fields', async () => { const event = await buildOnboardingEvent(member()); const text = onboardingRecordText(event); assert.match(text, /Community Profile Record/); assert.match(text, /Discord ID: user-1/); assert.match(text, /Source: discord_onboarding/); assert.doesNotMatch(text, /question=|response=|provider=|CONVERSATION_RECORD/); });
 
 test('Discord client requests the Guild Members intent for onboarding lifecycle events', () => {
   const bot = require('../src/bot');
