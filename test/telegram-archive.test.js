@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { config, chunk, archiveRecord, parseArchiveRecord, normalizeContent, memberRecordText, sessionRecordText, queryRecordText, conversationRecordText, statsText } = require('../src/backend/telegram-archive');
+const { config, chunk, archiveRecord, parseArchiveRecord, normalizeContent, memberRecordText, sessionRecordText, queryRecordText, conversationRecordText, statsText, memoryRecordText } = require('../src/backend/telegram-archive');
 
 test('Telegram archive requires only the bot token and private destination', () => {
   assert.deepEqual(config({ TELEGRAM_BOT_TOKEN: 'x', FORGE_DATA_CENTER_2_CHAT_ID: '-1001' }), { token: 'x', chatId: '-1001' });
@@ -25,6 +25,10 @@ test('Telegram records are human-readable, identity-scoped, and secret-safe', ()
   assert.match(conversation, /Conversation Record/);
   assert.match(stats, /System Event Record/);
   assert.match(query, /Status: ✅ Successful/);
+  const memory = memoryRecordText({ eventId: 'memory-1', userId: '123', username: 'jack', guildId: '456', timestamp: '2026-08-29T00:00:00Z', memoryAction: 'UPSERT', memory: { id: 'm-1', text: 'I am building a Discord bot.', topics: ['discord', 'bot'] } });
+  assert.match(memory, /Member Memory Record/);
+  assert.match(memory, /I am building a Discord bot/);
+  assert.doesNotMatch(memory, /TELEGRAM_BOT_TOKEN|API_KEY/);
 });
 
 test('Telegram archive record format can be read from an already-supplied archive message without inventing history retrieval', () => {

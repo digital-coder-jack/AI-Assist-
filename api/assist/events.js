@@ -1,3 +1,13 @@
 const { archiveEvent } = require('../../src/backend/telegram-archive');
 function authorized(req) { return !process.env.FORGE_ASSIST_API_SECRET || req.headers['x-forge-assist-secret'] === process.env.FORGE_ASSIST_API_SECRET; }
-module.exports = async (req, res) => { if (req.method !== 'POST') return res.status(405).json({ error: 'method_not_allowed' }); if (!authorized(req)) return res.status(401).json({ error: 'unauthorized' }); const event = req.body || {}; const onboarding = event.type === 'MEMBER_ONBOARDING'; const valid = onboarding ? event.discordUserId && event.eventId : event.userId && event.question && event.eventId; if (!valid) return res.status(400).json({ error: onboarding ? 'discordUserId_and_eventId_required' : 'userId_question_and_eventId_required' }); try { return res.status(202).json(await archiveEvent(event)); } catch (error) { console.error(`[forge-assist] Telegram archive failed: ${error.message}`); return res.status(503).json({ error: 'telegram_archive_unavailable' }); } };
+module.exports = async (req, res) => {
+  if (req.method !== 'POST') return res.status(405).json({ error: 'method_not_allowed' });
+  if (!authorized(req)) return res.status(401).json({ error: 'unauthorized' });
+  const event = req.body || {};
+  const onboarding = event.type === 'MEMBER_ONBOARDING';
+  const memory = event.type === 'MEMORY_RECORD';
+  const valid = onboarding ? event.discordUserId && event.eventId : memory ? event.userId && event.memory && event.memory.text && event.eventId : event.userId && event.question && event.eventId;
+  if (!valid) return res.status(400).json({ error: onboarding ? 'discordUserId_and_eventId_required' : memory ? 'userId_memory_and_eventId_required' : 'userId_question_and_eventId_required' });
+  try { return res.status(202).json(await archiveEvent(event)); }
+  catch (error) { console.error(`[forge-assist] Telegram archive failed: ${error.message}`); return res.status(503).json({ error: 'telegram_archive_unavailable' }); }
+};

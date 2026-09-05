@@ -17,9 +17,10 @@ module.exports = async function handler(req, res) {
   const body = req.body || {};
   const prompt = typeof body.message === 'string' ? body.message.trim() : '';
   const context = Array.isArray(body.context) ? body.context.filter(item => item && ['user', 'assistant'].includes(item.role) && typeof item.content === 'string').slice(-20) : [];
+  const memory = body.memory && typeof body.memory === 'object' ? { status: body.memory.status, items: Array.isArray(body.memory.items) ? body.memory.items.filter(item => item && typeof item.text === 'string').slice(0, 4) : [] } : { status: 'none', items: [] };
   if (!prompt || prompt.length > 8000) return res.status(400).json({ error: 'message_required', message: 'Please provide a message up to 8000 characters.' });
   try {
-    const prepared = await prepareRequest({ prompt, context, community: body.community || {}, env: process.env });
+    const prepared = await prepareRequest({ prompt, context, memory, community: body.community || {}, env: process.env });
     const language = detectLanguageStyle(prompt).language;
     const intent = identityIntent(prompt);
     if (intent === 'introduction' || intent === 'creator') {

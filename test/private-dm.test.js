@@ -66,6 +66,9 @@ test('language detection and provider instruction preserve the user language and
   assert.equal(bot._internals.languageOf('यह कैसे काम करता है?'), 'Hindi');
   assert.match(systemPrompt(), /same language and conversational style/);
   assert.match(systemPrompt(), /Do not translate/);
+  assert.match(systemPrompt(), /friendly and conversational/);
+  assert.match(systemPrompt(), /without forcing slang/);
+  assert.match(systemPrompt(), /do not mention internal memory/);
 });
 
 test('only the triggering mention is scheduled for deletion after 15 seconds', async () => {

@@ -138,6 +138,19 @@ function statsText(event) {
   ], { timestamp: event.timestamp, metadata: internalMetadata(event, { record_type: 'SYSTEM_EVENT_RECORD', event_type: 'QUERY_STATUS' }) });
 }
 
+function memoryRecordText(event) {
+  const memory = event.memory || {};
+  return card('🧠 Member Memory Record', [
+    `👤 User: ${userLabel({ ...event, username: event.username, displayName: event.displayName, userId: event.userId })}`,
+    `🆔 Discord ID: ${display(event.userId)}`,
+    `🏠 Community: ${communityLabel(event)}`,
+    `📝 Action: ${display(event.memoryAction, 'UPSERT')}`,
+    `🧩 Memory: ${display(memory.text || event.memoryText, 'Not available')}`,
+    `🏷 Topics: ${Array.isArray(memory.topics) && memory.topics.length ? memory.topics.join(', ') : 'Not classified'}`,
+    '🔒 Safety: Explicit member statement only; sensitive credentials excluded.',
+  ], { timestamp: event.timestamp, metadata: internalMetadata(event, { record_type: 'MEMORY_RECORD', memory_id: memory.id || event.memoryId, memory_action: event.memoryAction || 'UPSERT' }) });
+}
+
 function onboardingRecordText(event) {
   const profile = event.profile || event.onboarding || {};
   return card('👤 Community Profile Record', [
@@ -162,6 +175,10 @@ async function archiveEvent(event, env = process.env) {
     await sendRecord(onboardingRecordText(event), chatId, env);
     return { archived: true, eventId: event.eventId };
   }
+  if (event.type === 'MEMORY_RECORD') {
+    await sendRecord(memoryRecordText(event), chatId, env);
+    return { archived: true, eventId: event.eventId };
+  }
   if (event.memberEventType) await sendRecord(memberRecordText(event), chatId, env);
   if (event.sessionEventType) await sendRecord(sessionRecordText(event), chatId, env);
   await sendRecord(queryRecordText(event), chatId, env);
@@ -178,4 +195,4 @@ async function archiveEvent(event, env = process.env) {
   return { archived: true, eventId: event.eventId };
 }
 
-module.exports = { archiveEvent, config, chunk, archiveRecord, parseArchiveRecord, normalizeContent, istTimestamp, memberRecordText, sessionRecordText, queryRecordText, conversationRecordText, statsText, onboardingRecordText, SCHEMA_VERSION };
+module.exports = { archiveEvent, config, chunk, archiveRecord, parseArchiveRecord, normalizeContent, istTimestamp, memberRecordText, sessionRecordText, queryRecordText, conversationRecordText, statsText, onboardingRecordText, memoryRecordText, SCHEMA_VERSION };

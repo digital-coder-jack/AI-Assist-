@@ -49,12 +49,14 @@ test('search-disabled, missing-key, timeout, and empty-result paths are safe', a
 
 test('grounded preparation combines community and mocked web sources without live internet', async () => {
   const community = { guild: { name: 'Developer Forge' }, channel: { name: 'general', topic: 'AI discussion' }, publicRoles: ['Builders'] };
-  const prepared = await retrieval.prepareRequest({ prompt: 'Developer Forge me latest AI tools kya hain?', context: [], community, env: { WEB_SEARCH_ENABLED: 'true', TAVILY_API_KEY: 'tavily-secret' }, fetchImpl: async () => ({ ok: true, json: async () => ({ results: [{ title: 'Current source', url: 'https://example.com/current', content: 'Current public information.', score: 0.8 }] }) }) });
+  const prepared = await retrieval.prepareRequest({ prompt: 'Developer Forge me latest AI tools kya hain?', context: [], memory: { status: 'resolved', items: [{ text: 'I am building a Discord bot.', topics: ['discord', 'bot'], relevance: 0.7 }] }, community, env: { WEB_SEARCH_ENABLED: 'true', TAVILY_API_KEY: 'tavily-secret' }, fetchImpl: async () => ({ ok: true, json: async () => ({ results: [{ title: 'Current source', url: 'https://example.com/current', content: 'Current public information.', score: 0.8 }] }) }) });
   assert.equal(prepared.route.source, 'COMMUNITY + WEB');
   assert.equal(prepared.language.language, 'Hinglish');
   assert.match(prepared.prompt, /Developer Forge/);
   assert.match(prepared.prompt, /Current source/);
   assert.match(prepared.prompt, /not personal attributes/);
+  assert.match(prepared.prompt, /I am building a Discord bot/);
+  assert.doesNotMatch(prepared.prompt, /Telegram Data Center|memory metadata/i);
 });
 
 test('exact Hinglish self-description request is Forge Assist identity-safe', async () => {

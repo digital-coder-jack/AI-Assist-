@@ -96,7 +96,12 @@ function identityResponse(intent, language, provider = '') {
   const providerName = provider || 'different AI services';
   return hinglish ? `Main Forge Assist hoon, Developer Forge community ka AI assistant. Main behind the scenes ${providerName} use kar sakta hoon; ye implementation detail hai, meri identity nahi.` : language === 'Hindi' ? `मैं Forge Assist हूँ, Developer Forge community का AI assistant। मैं behind the scenes ${providerName} use कर सकता हूँ; यह implementation detail है, मेरी identity नहीं।` : `I'm Forge Assist, the AI assistant for the Developer Forge community. For this request, the configured provider is ${providerName}; that is an implementation detail, not my identity.`;
 }
-function buildGrounding({ prompt, context = [], community = {}, web = {} }) {
+function formatMemory(memory = {}) {
+  if (memory.status === 'ambiguous') return 'Several prior contexts may match. Ask one short clarification question rather than guessing.';
+  if (!Array.isArray(memory.items) || !memory.items.length) return 'No relevant long-term member memory was found. Do not pretend to remember unrelated context.';
+  return memory.items.slice(0, 4).map((item, index) => `[${index + 1}] ${normalizeText(item.text, 280)}`).join('\n');
+}
+function buildGrounding({ prompt, context = [], community = {}, web = {}, memory = { status: 'none', items: [] } }) {
   const language = detectLanguageStyle(prompt);
   const route = routeQuestion(prompt, community);
   const sections = [
@@ -104,17 +109,19 @@ function buildGrounding({ prompt, context = [], community = {}, web = {} }) {
     `Language/style requirement: respond in ${language.language} using the user's ${language.style}. Do not translate Roman Hindi/Hinglish into formal Hindi.`,
     'Community-data rule: use only the explicit community information below. Never infer sensitive or personal attributes from roles, names, or missing data.',
     `Explicit community information:\n${formatCommunity(community)}`,
+    `Member-memory rule: use only the explicit, relevant, user-scoped memory below. Do not reveal storage, metadata, Telegram, or internal records. Mention prior context only when it naturally helps. If confidence is low, use cautious wording such as “agar tu usi project ki baat kar raha hai...” rather than pretending to remember.\nRelevant member memory:\n${formatMemory(memory)}`,
   ];
   if (web.results?.length || route.webNeeded) sections.push(`Web-data rule: if web data is present, distinguish it from community data and cite concise source URLs. Do not invent current facts.\nWeb search results:\n${formatWeb(web.results || [])}`);
   if (context.length) sections.push(`Conversation context is user-provided history and may be incomplete:\n${context.slice(-12).map(item => `${item.role}: ${normalizeText(item.content, 1000)}`).join('\n')}`);
   sections.push(`User question:\n${normalizeText(prompt, 8000)}`);
   return sections.join('\n\n');
 }
-async function prepareRequest({ prompt, context = [], community = {}, env = process.env, fetchImpl = fetch }) {
+async function prepareRequest({ prompt, context = [], community = {}, memory = { status: 'none', items: [] }, env = process.env, fetchImpl = fetch }) {
   const safeCommunity = sanitizeCommunity(community);
+  const safeMemory = { status: memory.status === 'ambiguous' ? 'ambiguous' : 'resolved', items: Array.isArray(memory.items) ? memory.items.filter(item => item && typeof item.text === 'string').slice(0, 4) : [] };
   const route = routeQuestion(prompt, safeCommunity);
   const web = route.webNeeded ? await searchWeb(prompt, { env, fetchImpl }) : { enabled: false, results: [], reason: 'not_needed' };
-  return { prompt: buildGrounding({ prompt, context, community: safeCommunity, web }), context: [], community: safeCommunity, web, route, language: detectLanguageStyle(prompt) };
+  return { prompt: buildGrounding({ prompt, context, community: safeCommunity, memory: safeMemory, web }), context: [], community: safeCommunity, memory: safeMemory, web, route, language: detectLanguageStyle(prompt) };
 }
 
-module.exports = { normalizeText, detectLanguageStyle, sanitizeCommunity, hasCommunityData, communityRequested, webRequested, routeQuestion, searchWeb, formatCommunity, formatWeb, identityIntent, identityResponse, buildGrounding, prepareRequest };
+module.exports = { normalizeText, detectLanguageStyle, sanitizeCommunity, hasCommunityData, communityRequested, webRequested, routeQuestion, searchWeb, formatCommunity, formatWeb, formatMemory, identityIntent, identityResponse, buildGrounding, prepareRequest };

@@ -1,6 +1,7 @@
 const { readDiscordToken, readConfiguredChannelIds, logTokenDiagnostic, logChannelDiagnostic } = require('./config');
 const { Client, GatewayIntentBits, Partials } = require('discord.js');
 const { registerOnboardingHandlers, resetOnboardingForTests } = require('./onboarding');
+const memberMemory = require('../backend/member-memory');
 
 const MAX_DISCORD_LENGTH = 2000;
 const DELETE_DELAY_MS = 15000;
@@ -40,13 +41,13 @@ function communityContext(message) {
   return { guild: { id: guild?.id || message.guildId || null, name: guild?.name || null, description: guild?.description || null }, channel: { id: message.channelId || message.channel?.id || null, name: message.channel?.name || null, topic: message.channel?.topic || null }, publicRoles: roles };
 }
 
-async function askBackend(message, prompt, env = process.env, scope = keyFor(message), attachments = []) {
+async function askBackend(message, prompt, env = process.env, scope = keyFor(message), attachments = [], memoryContext = { status: 'none', items: [] }) {
   const base = (env.FORGE_ASSIST_BACKEND_URL || '').replace(/\/$/, '');
   if (!base) throw new Error('FORGE_ASSIST_BACKEND_URL is not configured');
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), Number(env.FORGE_ASSIST_REQUEST_TIMEOUT_MS || 25000));
   try {
-    const response = await fetch(`${base}/api/chat`, { method: 'POST', signal: controller.signal, headers: { 'content-type': 'application/json', 'x-forge-assist-secret': env.FORGE_ASSIST_API_SECRET || '' }, body: JSON.stringify({ message: prompt, context: getContext(scope), community: communityContext(message), attachments: attachments.map(({ id, filename, contentType, size }) => ({ id, filename, contentType, size })) }) });
+    const response = await fetch(`${base}/api/chat`, { method: 'POST', signal: controller.signal, headers: { 'content-type': 'application/json', 'x-forge-assist-secret': env.FORGE_ASSIST_API_SECRET || '' }, body: JSON.stringify({ message: prompt, context: getContext(scope), memory: { status: memoryContext.status, items: memoryContext.items.map(({ text, topics, relevance }) => ({ text, topics, relevance })) }, community: communityContext(message), attachments: attachments.map(({ id, filename, contentType, size }) => ({ id, filename, contentType, size })) }) });
     const data = await response.json().catch(() => ({}));
     if (!response.ok || typeof data.response !== 'string') throw new Error(data.message || `backend returned ${response.status}`);
     return { response: data.response, provider: data.provider || 'unknown' };
@@ -70,6 +71,10 @@ async function postArchive(event, env = process.env, logger = console) {
     return { archived: false, error: 'network_error' };
   }
 }
+function postMemoryRecord(message, memoryItem, action, env = process.env, logger = console) {
+  const timestamp = message.createdAt?.toISOString() || new Date().toISOString();
+  return postArchive({ type: 'MEMORY_RECORD', eventId: `memory:${message.id}:${memoryItem?.id || 'all'}:${action}`, userId: message.author.id, username: message.author.username, displayName: message.member?.displayName || message.author.globalName || message.author.username, guildId: message.guildId || null, guildName: message.guild?.name || null, channelId: message.channelId || message.channel?.id || null, channelName: message.channel?.name || null, mode: message.guildId ? 'public' : 'private_dm', timestamp, memoryAction: action, memory: memoryItem || { text: 'All member memory removed by explicit request', topics: [] } }, env, logger);
+}
 function archiveEvent(message, prompt, success, provider, response = '', scope = keyFor(message)) {
   const attachments = attachmentMetadata(message); const language = languageOf(prompt); const mode = scope.startsWith('dm:') ? 'private_dm' : 'public'; const timestamp = message.createdAt?.toISOString() || new Date().toISOString(); const memberKey = message.author.id; const memberSignature = `${language}|${mode}`; const previousMember = memberState.get(memberKey); const memberEventType = !previousMember ? 'MEMBER_CREATED' : previousMember.signature !== memberSignature ? 'MEMBER_UPDATED' : null; memberState.set(memberKey, { firstSeenAt: previousMember?.firstSeenAt || timestamp, signature: memberSignature }); const sessionId = sessionState.get(scope)?.sessionId || `session:${scope}`; const sessionEventType = sessionState.has(scope) ? null : 'SESSION_STARTED'; if (!sessionState.has(scope)) sessionState.set(scope, { sessionId, createdAt: timestamp }); archiveStats.totalQueries += 1; if (success) archiveStats.successfulQueries += 1; else archiveStats.failedQueries += 1; archiveStats.providers[provider] = archiveStats.providers[provider] || { success: 0, failure: 0 }; archiveStats.providers[provider][success ? 'success' : 'failure'] += 1; archiveStats.languages[language] = (archiveStats.languages[language] || 0) + 1; archiveStats.attachments += attachments.length;
   const eventId = `${message.id}:${success ? 'success' : 'failure'}`;
@@ -83,11 +88,30 @@ async function sendResponse(channel, response, message, replyFirst = false) { le
 
 async function processPrivateQuery(message, channel, prompt, { logger = console, env = process.env, scope = keyFor(message), schedulePublicDeletion = false } = {}) {
   const attachments = attachmentMetadata(message);
+  const timestamp = message.createdAt?.toISOString() || new Date().toISOString();
+  if (memberMemory.isForgetRequest(prompt)) {
+    const forgotten = memberMemory.forgetMemory(message.author.id, prompt);
+    const response = languageOf(prompt) === 'Hinglish' ? 'Theek hai bhai, maine relevant saved context hata diya hai.' : languageOf(prompt) === 'Hindi' ? 'ठीक है, मैंने relevant saved context हटा दिया है।' : 'Okay, I removed the relevant saved context.';
+    void postMemoryRecord(message, null, `FORGOT_${forgotten.removed}`, env, logger);
+    saveTurn(scope, prompt, response);
+    archiveEvent(message, prompt, true, 'memory', response, scope);
+    await sendResponse(channel, response, message, !isDirectMessage(message) && !schedulePublicDeletion);
+    return { handled: true, reason: 'memory_forgotten', provider: 'memory' };
+  }
+  const memoryContext = memberMemory.resolveMemory(message.author.id, prompt);
+  if (memoryContext.status === 'ambiguous') {
+    const response = languageOf(prompt) === 'Hinglish' ? 'Wahi kis project ki baat kar raha hai — Discord bot, deployment, ya koi aur? Thoda clarify kar de.' : 'Which project do you mean — the Discord bot, the deployment, or something else? Please clarify briefly.';
+    archiveEvent(message, prompt, true, 'memory', response, scope);
+    await sendResponse(channel, response, message, !isDirectMessage(message) && !schedulePublicDeletion);
+    return { handled: true, reason: 'memory_clarification', provider: 'memory' };
+  }
   try {
     await channel.sendTyping?.();
-    const backendPromise = askBackend(message, prompt, env, scope, attachments);
+    const backendPromise = askBackend(message, prompt, env, scope, attachments, memoryContext);
     if (schedulePublicDeletion) scheduleDeletion(message, logger);
     const result = await backendPromise;
+    const memoryResult = memberMemory.upsertFromPrompt(message.author.id, prompt, timestamp);
+    for (const stored of memoryResult.results || []) if (stored.stored && stored.memory) void postMemoryRecord(message, stored.memory, stored.updated ? 'UPDATED' : 'UPSERT', env, logger);
     saveTurn(scope, prompt, result.response);
     archiveEvent(message, prompt, true, result.provider, result.response, scope);
     await sendResponse(channel, result.response, message, !isDirectMessage(message) && !schedulePublicDeletion);
@@ -112,4 +136,4 @@ function registerMessageHandlers(client, { logger = console, env = process.env }
 function createBot() { const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.DirectMessages], partials: [Partials.Channel] }); client.once('ready', () => logGuildDiagnostics(client)); return registerMessageHandlers(client); }
 async function startBot({ env = process.env, botFactory = createBot, logger = console } = {}) { const token = readDiscordToken(env); logTokenDiagnostic(token, logger); logChannelDiagnostic(readConfiguredChannelIds(env), logger); if (!token) throw new Error('DISCORD_TOKEN is required'); return botFactory().login(token); }
 if (require.main === module) startBot().catch(error => { console.error(`[forge-assist] startup failed: ${error.message}`); process.exitCode = 1; });
-module.exports = { createBot, startBot, logGuildDiagnostics, logMessageDiagnostic, registerMessageHandlers, handleMessage, processPrivateQuery, scheduleDeletion, splitMessage, shouldRespond, targetReason, conversations, archiveEvent, postArchive, archiveStats, _test: { processedMessageIds, deletionTimers, sendPrivateRedirect, openPrivateConversation, keyFor, conversationKey, isDirectMessage, attachmentMetadata, communityContext }, _internals: { askBackend, cleanPrompt, languageOf, getContext, saveTurn }, _resetForTests: () => { conversations.clear(); processedMessageIds.clear(); archivedEventIds.clear(); deletionTimers.clear(); archiveStats.totalQueries = 0; archiveStats.successfulQueries = 0; archiveStats.failedQueries = 0; archiveStats.attachments = 0; archiveStats.providers = {}; archiveStats.languages = {}; memberState.clear(); sessionState.clear(); resetOnboardingForTests(); } };
+module.exports = { createBot, startBot, logGuildDiagnostics, logMessageDiagnostic, registerMessageHandlers, handleMessage, processPrivateQuery, scheduleDeletion, splitMessage, shouldRespond, targetReason, conversations, archiveEvent, postArchive, archiveStats, _test: { processedMessageIds, deletionTimers, sendPrivateRedirect, openPrivateConversation, keyFor, conversationKey, isDirectMessage, attachmentMetadata, communityContext, postMemoryRecord }, _internals: { askBackend, cleanPrompt, languageOf, getContext, saveTurn }, _resetForTests: () => { conversations.clear(); processedMessageIds.clear(); archivedEventIds.clear(); deletionTimers.clear(); memberMemory.reset(); archiveStats.totalQueries = 0; archiveStats.successfulQueries = 0; archiveStats.failedQueries = 0; archiveStats.attachments = 0; archiveStats.providers = {}; archiveStats.languages = {}; memberState.clear(); sessionState.clear(); resetOnboardingForTests(); } };
